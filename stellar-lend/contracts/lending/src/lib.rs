@@ -1,4 +1,5 @@
 #![no_std]
+#![allow(deprecated)]
 use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, Val, Vec};
 
 mod borrow;
@@ -23,7 +24,13 @@ use flash_loan::{
     flash_loan as flash_loan_impl, set_flash_loan_fee_bps as set_flash_loan_fee_impl,
     FlashLoanError,
 };
-use pause::{is_paused, set_pause as set_pause_impl, PauseType};
+use pause::{
+    blocks_high_risk_ops, complete_recovery as complete_recovery_logic,
+    get_emergency_state as get_emergency_state_logic, get_guardian as get_guardian_logic,
+    is_paused, is_recovery, set_guardian as set_guardian_logic, set_pause as set_pause_impl,
+    start_recovery as start_recovery_logic, trigger_shutdown as trigger_shutdown_logic,
+    EmergencyState, PauseType,
+};
 use token_receiver::receive as receive_impl;
 
 mod views;
@@ -45,6 +52,8 @@ mod borrow_test;
 #[cfg(test)]
 mod deposit_test;
 #[cfg(test)]
+mod emergency_shutdown_test;
+#[cfg(test)]
 mod flash_loan_test;
 #[cfg(test)]
 mod pause_test;
@@ -57,6 +66,9 @@ mod views_test;
 mod data_store_test;
 #[cfg(test)]
 mod math_safety_test;
+#[cfg(test)]
+mod upgrade_migration_safety_test;
+mod race_tests;
 #[cfg(test)]
 mod upgrade_test;
 #[cfg(test)]
@@ -94,6 +106,9 @@ impl LendingContract {
         collateral_asset: Address,
         collateral_amount: i128,
     ) -> Result<(), BorrowError> {
+        if blocks_high_risk_ops(&env) {
+            return Err(BorrowError::ProtocolPaused);
+        }
         borrow_impl(
             &env,
             user,
@@ -111,19 +126,57 @@ impl LendingContract {
         pause_type: PauseType,
         paused: bool,
     ) -> Result<(), BorrowError> {
-        let current_admin = get_protocol_admin(&env).ok_or(BorrowError::Unauthorized)?;
-        if admin != current_admin {
-            return Err(BorrowError::Unauthorized);
-        }
-        admin.require_auth();
+        ensure_admin(&env, &admin)?;
         set_pause_impl(&env, admin, pause_type, paused);
         Ok(())
+    }
+
+    /// Configure guardian address authorized to trigger emergency shutdown.
+    pub fn set_guardian(env: Env, admin: Address, guardian: Address) -> Result<(), BorrowError> {
+        ensure_admin(&env, &admin)?;
+        set_guardian_logic(&env, admin, guardian);
+        Ok(())
+    }
+
+    /// Return current guardian address if configured.
+    pub fn get_guardian(env: Env) -> Option<Address> {
+        get_guardian_logic(&env)
+    }
+
+    /// Trigger emergency shutdown (admin or guardian).
+    pub fn emergency_shutdown(env: Env, caller: Address) -> Result<(), BorrowError> {
+        ensure_shutdown_authorized(&env, &caller)?;
+        caller.require_auth();
+        trigger_shutdown_logic(&env, caller);
+        Ok(())
+    }
+
+    /// Move from hard shutdown into controlled user recovery.
+    pub fn start_recovery(env: Env, admin: Address) -> Result<(), BorrowError> {
+        ensure_admin(&env, &admin)?;
+        if get_emergency_state_logic(&env) != EmergencyState::Shutdown {
+            return Err(BorrowError::ProtocolPaused);
+        }
+        start_recovery_logic(&env, admin);
+        Ok(())
+    }
+
+    /// Return protocol to normal operation after recovery procedures.
+    pub fn complete_recovery(env: Env, admin: Address) -> Result<(), BorrowError> {
+        ensure_admin(&env, &admin)?;
+        complete_recovery_logic(&env, admin);
+        Ok(())
+    }
+
+    /// Read current emergency lifecycle state.
+    pub fn get_emergency_state(env: Env) -> EmergencyState {
+        get_emergency_state_logic(&env)
     }
 
     /// Repay borrowed assets
     pub fn repay(env: Env, user: Address, asset: Address, amount: i128) -> Result<(), BorrowError> {
         user.require_auth();
-        if is_paused(&env, PauseType::Repay) {
+        if is_paused(&env, PauseType::Repay) || (!is_recovery(&env) && blocks_high_risk_ops(&env)) {
             return Err(BorrowError::ProtocolPaused);
         }
         borrow_repay(&env, user, asset, amount)
@@ -137,7 +190,7 @@ impl LendingContract {
         amount: i128,
     ) -> Result<(), BorrowError> {
         user.require_auth();
-        if is_paused(&env, PauseType::Deposit) {
+        if is_paused(&env, PauseType::Deposit) || blocks_high_risk_ops(&env) {
             return Err(BorrowError::ProtocolPaused);
         }
         borrow_deposit(&env, user, asset, amount)
@@ -150,27 +203,46 @@ impl LendingContract {
         asset: Address,
         amount: i128,
     ) -> Result<i128, DepositError> {
-        if is_paused(&env, PauseType::Deposit) {
+        if is_paused(&env, PauseType::Deposit) || blocks_high_risk_ops(&env) {
             return Err(DepositError::DepositPaused);
         }
         deposit_impl(&env, user, asset, amount)
     }
 
-    /// Liquidate a position
+    /// Liquidate a position [Issue #391 - Profiling Enabled]
     pub fn liquidate(
         env: Env,
         liquidator: Address,
-        _borrower: Address,
-        _debt_asset: Address,
-        _collateral_asset: Address,
-        _amount: i128,
+        borrower: Address,
+        debt_asset: Address,
+        collateral_asset: Address,
+        amount: i128,
     ) -> Result<(), BorrowError> {
         liquidator.require_auth();
-        if is_paused(&env, PauseType::Liquidation) {
+        if is_paused(&env, PauseType::Liquidation) || blocks_high_risk_ops(&env) {
             return Err(BorrowError::ProtocolPaused);
         }
-        // Stub implementation, or call borrow::liquidate if it exists
+
+        // Point to the internal liquidation logic in the borrow module
+        borrow::liquidate_position(
+            &env,
+            liquidator,
+            borrower,
+            debt_asset,
+            collateral_asset,
+            amount,
+        )?;
+
         Ok(())
+    }
+
+    /// Returns gas/performance stats for the current transaction (Issue #391)
+    /// [CPU Instructions, Memory Bytes]
+    pub fn get_performance_stats(env: Env) -> Vec<u64> {
+        let mut stats = Vec::new(&env);
+        stats.push_back(env.budget().cpu_instruction_count());
+        stats.push_back(env.budget().memory_bytes_count());
+        stats
     }
 
     /// Get user's debt position
@@ -254,7 +326,6 @@ impl LendingContract {
     }
 
     /// Set deposit pause state (admin only)
-    /// Deprecated: use set_pause instead
     pub fn set_deposit_paused(env: Env, paused: bool) -> Result<(), DepositError> {
         let admin = get_protocol_admin(&env).ok_or(DepositError::Unauthorized)?;
         admin.require_auth();
@@ -285,6 +356,9 @@ impl LendingContract {
         amount: i128,
         params: Bytes,
     ) -> Result<(), FlashLoanError> {
+        if is_paused(&env, PauseType::All) || blocks_high_risk_ops(&env) {
+            return Err(FlashLoanError::ProtocolPaused);
+        }
         flash_loan_impl(&env, receiver, asset, amount, params)
     }
 
@@ -301,9 +375,11 @@ impl LendingContract {
         user: Address,
         asset: Address,
         amount: i128,
-    ) -> Result<i128, withdraw::WithdrawError> {
-        if is_paused(&env, PauseType::Withdraw) {
-            return Err(withdraw::WithdrawError::WithdrawPaused);
+    ) -> Result<i128, WithdrawError> {
+        if is_paused(&env, PauseType::Withdraw)
+            || (!is_recovery(&env) && blocks_high_risk_ops(&env))
+        {
+            return Err(WithdrawError::WithdrawPaused);
         }
         withdraw_logic(&env, user, asset, amount)
     }
@@ -312,18 +388,17 @@ impl LendingContract {
     pub fn initialize_withdraw_settings(
         env: Env,
         min_withdraw_amount: i128,
-    ) -> Result<(), withdraw::WithdrawError> {
-        let current_admin =
-            get_protocol_admin(&env).ok_or(withdraw::WithdrawError::Unauthorized)?;
+    ) -> Result<(), WithdrawError> {
+        let current_admin = get_protocol_admin(&env).ok_or(WithdrawError::Unauthorized)?;
         current_admin.require_auth();
-        withdraw::initialize_withdraw_settings(&env, min_withdraw_amount)
+        initialize_withdraw_logic(&env, min_withdraw_amount)
     }
 
     /// Set withdraw pause state (admin only)
-    pub fn set_withdraw_paused(env: Env, paused: bool) -> Result<(), withdraw::WithdrawError> {
-        let admin = get_protocol_admin(&env).ok_or(withdraw::WithdrawError::Unauthorized)?;
+    pub fn set_withdraw_paused(env: Env, paused: bool) -> Result<(), WithdrawError> {
+        let admin = get_protocol_admin(&env).ok_or(WithdrawError::Unauthorized)?;
         admin.require_auth();
-        withdraw::set_withdraw_paused(&env, paused)
+        set_withdraw_paused_logic(&env, paused)
     }
 
     /// Token receiver hook
@@ -352,6 +427,10 @@ impl LendingContract {
 
     pub fn upgrade_add_approver(env: Env, caller: Address, approver: Address) {
         upgrade::UpgradeManager::add_approver(env, caller, approver);
+    }
+
+    pub fn upgrade_remove_approver(env: Env, caller: Address, approver: Address) {
+        upgrade::UpgradeManager::remove_approver(env, caller, approver);
     }
 
     pub fn upgrade_propose(
@@ -386,4 +465,88 @@ impl LendingContract {
     pub fn current_version(env: Env) -> u32 {
         upgrade::UpgradeManager::current_version(env)
     }
+
+    // ───────────────────────────────────────────────────
+    // Data Store Management
+    // ───────────────────────────────────────────────────
+
+    pub fn data_store_init(env: Env, admin: Address) {
+        data_store::DataStore::init(env, admin);
+    }
+
+    pub fn data_grant_writer(env: Env, caller: Address, writer: Address) {
+        data_store::DataStore::grant_writer(env, caller, writer);
+    }
+
+    pub fn data_revoke_writer(env: Env, caller: Address, writer: Address) {
+        data_store::DataStore::revoke_writer(env, caller, writer);
+    }
+
+    pub fn data_save(env: Env, caller: Address, key: soroban_sdk::String, value: Bytes) {
+        data_store::DataStore::data_save(env, caller, key, value);
+    }
+
+    pub fn data_load(env: Env, key: soroban_sdk::String) -> Bytes {
+        data_store::DataStore::data_load(env, key)
+    }
+
+    pub fn data_backup(env: Env, caller: Address, backup_name: soroban_sdk::String) {
+        data_store::DataStore::data_backup(env, caller, backup_name);
+    }
+
+    pub fn data_restore(env: Env, caller: Address, backup_name: soroban_sdk::String) {
+        data_store::DataStore::data_restore(env, caller, backup_name);
+    }
+
+    pub fn data_migrate_bump_version(
+        env: Env,
+        caller: Address,
+        new_version: u32,
+        memo: soroban_sdk::String,
+    ) {
+        data_store::DataStore::data_migrate_bump_version(env, caller, new_version, memo);
+    }
+
+    pub fn data_schema_version(env: Env) -> u32 {
+        data_store::DataStore::schema_version(env)
+    }
+
+    pub fn data_entry_count(env: Env) -> u32 {
+        data_store::DataStore::entry_count(env)
+    }
+
+    pub fn data_key_exists(env: Env, key: soroban_sdk::String) -> bool {
+        data_store::DataStore::key_exists(env, key)
+    }
+
+    /// Initialize borrow settings (admin only)
+    pub fn initialize_borrow_settings(
+        env: Env,
+        debt_ceiling: i128,
+        min_borrow_amount: i128,
+    ) -> Result<(), BorrowError> {
+        initialize_borrow_logic(&env, debt_ceiling, min_borrow_amount)
+}
+
+fn ensure_admin(env: &Env, admin: &Address) -> Result<(), BorrowError> {
+    let current_admin = get_protocol_admin(env).ok_or(BorrowError::Unauthorized)?;
+    if *admin != current_admin {
+        return Err(BorrowError::Unauthorized);
+    }
+    admin.require_auth();
+    Ok(())
+}
+
+fn ensure_shutdown_authorized(env: &Env, caller: &Address) -> Result<(), BorrowError> {
+    let admin = get_protocol_admin(env).ok_or(BorrowError::Unauthorized)?;
+    if *caller == admin {
+        return Ok(());
+    }
+
+    let guardian = get_guardian_logic(env).ok_or(BorrowError::Unauthorized)?;
+    if *caller != guardian {
+        return Err(BorrowError::Unauthorized);
+    }
+
+    Ok(())
 }

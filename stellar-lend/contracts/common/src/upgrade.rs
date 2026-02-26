@@ -93,6 +93,7 @@ impl UpgradeManager {
             .persistent()
             .set(&UpgradeKey::CurrentVersion, &0u32);
 
+        #[allow(deprecated)]
         env.events()
             .publish((symbol_short!("up_init"), admin), required_approvals);
     }
@@ -110,11 +111,38 @@ impl UpgradeManager {
                 .set(&UpgradeKey::Approvers, &approvers);
         }
 
+        #[allow(deprecated)]
         env.events()
             .publish((symbol_short!("up_apadd"), caller, approver), ());
     }
 
     #[allow(deprecated)]
+    pub fn remove_approver(env: Env, caller: Address, approver: Address) {
+        caller.require_auth();
+        Self::assert_admin(&env, &caller);
+
+        let approvers = Self::approvers(&env);
+        let mut updated = Vec::new(&env);
+        for existing in approvers.iter() {
+            if existing != approver {
+                updated.push_back(existing);
+            }
+        }
+
+        if updated.len() == approvers.len() {
+            return;
+        }
+        if updated.is_empty() || updated.len() < Self::required_approvals(env.clone()) {
+            panic_with_error!(&env, UpgradeError::InvalidThreshold);
+        }
+
+        env.storage()
+            .persistent()
+            .set(&UpgradeKey::Approvers, &updated);
+        env.events()
+            .publish((symbol_short!("up_aprm"), caller, approver), ());
+    }
+
     pub fn upgrade_propose(
         env: Env,
         caller: Address,
@@ -162,6 +190,7 @@ impl UpgradeManager {
             .persistent()
             .set(&UpgradeKey::NextProposalId, &(id + 1));
 
+        #[allow(deprecated)]
         env.events()
             .publish((symbol_short!("up_prop"), caller, id), new_version);
         id
@@ -189,6 +218,7 @@ impl UpgradeManager {
         env.storage()
             .persistent()
             .set(&UpgradeKey::Proposal(proposal_id), &proposal);
+        #[allow(deprecated)]
         env.events()
             .publish((symbol_short!("up_appr"), caller, proposal_id), count);
         count
@@ -224,6 +254,7 @@ impl UpgradeManager {
             .persistent()
             .set(&UpgradeKey::Proposal(proposal_id), &proposal);
 
+        #[allow(deprecated)]
         env.events().publish(
             (symbol_short!("up_exec"), caller, proposal_id),
             proposal.new_version,
@@ -259,6 +290,7 @@ impl UpgradeManager {
             .persistent()
             .set(&UpgradeKey::Proposal(proposal_id), &proposal);
 
+        #[allow(deprecated)]
         env.events().publish(
             (symbol_short!("up_roll"), caller, proposal_id),
             prev_version,

@@ -1,5 +1,6 @@
 use super::*;
 use withdraw::WithdrawError;
+use crate::withdraw::WithdrawError;
 use soroban_sdk::{
     testutils::{Address as _, Events, Ledger},
     Address, Env, FromVal, Symbol,
