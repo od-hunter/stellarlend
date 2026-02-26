@@ -39,12 +39,7 @@ fn setup_with_upgrade_init(
 }
 
 // Seed user state with data store entries
-fn seed_user_state(
-    env: &Env,
-    client: &LendingContractClient,
-    admin: &Address,
-    users: &[Address],
-) {
+fn seed_user_state(env: &Env, client: &LendingContractClient, admin: &Address, users: &[Address]) {
     // Initialize data store for user metadata
     client.data_store_init(admin);
 
