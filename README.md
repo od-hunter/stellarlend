@@ -309,7 +309,18 @@ For a complete list of entrypoints including AMM, flash loans, bridge, governanc
 
 ## Contributing
 
-We welcome contributions! Here's how to get started:
+We welcome contributions! StellarLend participates in the **Stellar Wave Program** via [Drips](https://www.drips.network/). Contributors can earn points and rewards by picking up issues labeled **`Stellar Wave`** in the issue tracker.
+
+Types of contributions we're looking for:
+
+- **Contract improvements** — new features, optimizations, gas efficiency
+- **Security audits** — reviewing contract logic, identifying vulnerabilities
+- **Testing** — expanding test coverage, edge cases, fuzz testing, integration tests
+- **Oracle enhancements** — additional price feed sources, improved validation, fallback strategies
+- **Documentation** — protocol docs, developer guides, architecture diagrams
+- **Frontend / SDK integration** — client libraries, dashboards, monitoring tools
+
+If you're new to the project, look for issues tagged `good first issue` or `Stellar Wave` to get started.
 
 ### Development Workflow
 

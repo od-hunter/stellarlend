@@ -38,3 +38,10 @@ lerna-debug.log*
 *.wasm.hash
 .soroban/
 
+# Build error logs
+build_errors*.txt
+TEST_FIX.txt
+
+# IDE / Tools
+.claude/
+
