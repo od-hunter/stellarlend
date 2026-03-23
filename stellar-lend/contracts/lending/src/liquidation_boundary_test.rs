@@ -362,6 +362,28 @@ fn test_set_liquidation_incentive_bps_invalid_above_10000() {
 }
 
 #[test]
+fn test_set_liquidation_incentive_bps_invalid_negative() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _user, _asset, _collateral_asset) = setup(&env);
+    assert_eq!(
+        client.try_set_liquidation_incentive_bps(&admin, &-1),
+        Err(Ok(BorrowError::InvalidAmount))
+    );
+}
+
+#[test]
+fn test_set_close_factor_bps_invalid_negative() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, _user, _asset, _collateral_asset) = setup(&env);
+    assert_eq!(
+        client.try_set_close_factor_bps(&admin, &-1),
+        Err(Ok(BorrowError::InvalidAmount))
+    );
+}
+
+#[test]
 fn test_set_liquidation_incentive_bps_valid_zero() {
     // Zero incentive is valid (liquidator gets no bonus).
     let env = Env::default();

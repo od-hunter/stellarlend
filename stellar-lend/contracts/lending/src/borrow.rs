@@ -239,7 +239,7 @@ pub fn set_close_factor_bps(env: &Env, admin: &Address, bps: i128) -> Result<(),
         return Err(BorrowError::Unauthorized);
     }
     admin.require_auth();
-    if bps <= 0 || bps > 10000 {
+    if !(1..=10000).contains(&bps) {
         return Err(BorrowError::InvalidAmount);
     }
     env.storage()
