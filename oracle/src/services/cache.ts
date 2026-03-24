@@ -177,7 +177,7 @@ export class Cache {
   private evictLRUBatch(): void {
     const batchSize = Math.max(
       1,
-      Math.ceil(this.config.maxEntries * this.config.evictBatchFraction),
+      Math.ceil(this.config.maxEntries * this.config.evictBatchFraction)
     );
 
     let evicted = 0;

@@ -109,7 +109,9 @@ export class CircuitBreaker {
     this.consecutiveFailures = 0;
 
     if (this.state !== CircuitState.CLOSED) {
-      logger.info(`Circuit breaker CLOSED for provider "${this.config.providerName}" – recovery confirmed`);
+      logger.info(
+        `Circuit breaker CLOSED for provider "${this.config.providerName}" – recovery confirmed`
+      );
       this.transitionTo(CircuitState.CLOSED);
     }
   }
