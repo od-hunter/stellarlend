@@ -33,10 +33,17 @@ class MockProvider extends BasePriceProvider {
     if (this._fail) throw new Error(`${this.name} is down`);
     const price = this.prices.get(asset.toUpperCase());
     if (price === undefined) throw new Error(`${asset} not found`);
-    return { asset: asset.toUpperCase(), price, timestamp: Math.floor(Date.now() / 1000), source: this.name };
+    return {
+      asset: asset.toUpperCase(),
+      price,
+      timestamp: Math.floor(Date.now() / 1000),
+      source: this.name,
+    };
   }
 
-  setFail(v: boolean) { this._fail = v; }
+  setFail(v: boolean) {
+    this._fail = v;
+  }
 }
 
 function makeAggregator(providers: MockProvider[], backoffMs = 10_000) {

@@ -11,7 +11,11 @@
  */
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { CircuitBreaker, CircuitState, createCircuitBreaker } from '../src/services/circuit-breaker.js';
+import {
+  CircuitBreaker,
+  CircuitState,
+  createCircuitBreaker,
+} from '../src/services/circuit-breaker.js';
 
 describe('CircuitBreaker', () => {
   let cb: CircuitBreaker;
