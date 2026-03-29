@@ -181,6 +181,81 @@ describe('Configuration', () => {
         expect(config.logLevel).toBe(level);
       });
     });
+
+    it('should use testnet defaults when STELLAR_NETWORK is testnet', () => {
+      process.env.STELLAR_NETWORK = 'testnet';
+      process.env.CONTRACT_ID = 'CTEST123456789';
+      process.env.ADMIN_SECRET_KEY = 'STEST123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789';
+
+      const config = loadConfig();
+
+      expect(config.stellarNetwork).toBe('testnet');
+      expect(config.stellarRpcUrl).toBe('https://soroban-testnet.stellar.org');
+      expect(config.baseFee).toBe(100000);
+    });
+
+    it('should use mainnet defaults when STELLAR_NETWORK is mainnet', () => {
+      process.env.STELLAR_NETWORK = 'mainnet';
+      process.env.CONTRACT_ID = 'CTEST123456789';
+      process.env.ADMIN_SECRET_KEY = 'STEST123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789';
+
+      const config = loadConfig();
+
+      expect(config.stellarNetwork).toBe('mainnet');
+      expect(config.stellarRpcUrl).toBe('https://soroban.stellar.org');
+      expect(config.baseFee).toBe(200000);
+    });
+
+    it('should override network RPC URL when STELLAR_RPC_URL is provided', () => {
+      process.env.STELLAR_NETWORK = 'mainnet';
+      process.env.STELLAR_RPC_URL = 'https://custom-rpc.example.com';
+      process.env.CONTRACT_ID = 'CTEST123456789';
+      process.env.ADMIN_SECRET_KEY = 'STEST123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789';
+
+      const config = loadConfig();
+
+      expect(config.stellarNetwork).toBe('mainnet');
+      expect(config.stellarRpcUrl).toBe('https://custom-rpc.example.com');
+      expect(config.baseFee).toBe(200000); // Should still use network default for baseFee
+    });
+
+    it('should override network base fee when STELLAR_BASE_FEE is provided', () => {
+      process.env.STELLAR_NETWORK = 'testnet';
+      process.env.STELLAR_BASE_FEE = '150000';
+      process.env.CONTRACT_ID = 'CTEST123456789';
+      process.env.ADMIN_SECRET_KEY = 'STEST123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789';
+
+      const config = loadConfig();
+
+      expect(config.stellarNetwork).toBe('testnet');
+      expect(config.stellarRpcUrl).toBe('https://soroban-testnet.stellar.org'); // Should still use network default for RPC
+      expect(config.baseFee).toBe(150000);
+    });
+
+    it('should override both network defaults when both env vars are provided', () => {
+      process.env.STELLAR_NETWORK = 'testnet';
+      process.env.STELLAR_RPC_URL = 'https://custom-rpc.example.com';
+      process.env.STELLAR_BASE_FEE = '300000';
+      process.env.CONTRACT_ID = 'CTEST123456789';
+      process.env.ADMIN_SECRET_KEY = 'STEST123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789';
+
+      const config = loadConfig();
+
+      expect(config.stellarNetwork).toBe('testnet');
+      expect(config.stellarRpcUrl).toBe('https://custom-rpc.example.com');
+      expect(config.baseFee).toBe(300000);
+    });
+
+    it('should include baseFee in configuration', () => {
+      process.env.CONTRACT_ID = 'CTEST123456789';
+      process.env.ADMIN_SECRET_KEY = 'STEST123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789';
+
+      const config = loadConfig();
+
+      expect(config.baseFee).toBeDefined();
+      expect(typeof config.baseFee).toBe('number');
+      expect(config.baseFee).toBeGreaterThan(0);
+    });
   });
 
   describe('Asset Mappings', () => {

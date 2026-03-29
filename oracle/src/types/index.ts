@@ -111,6 +111,7 @@ export interface ContractUpdateResult {
 export interface OracleServiceConfig {
   stellarNetwork: 'testnet' | 'mainnet';
   stellarRpcUrl: string;
+  baseFee: number;
   contractId: string;
   adminSecretKey: string;
   updateIntervalMs: number;

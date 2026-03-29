@@ -19,11 +19,26 @@ export type { OracleServiceConfig } from './types/index.js';
 dotenv.config();
 
 /**
+ * Network-specific defaults
+ */
+const NETWORK_DEFAULTS = {
+  testnet: { 
+    rpcUrl: 'https://soroban-testnet.stellar.org', 
+    baseFee: 100000 
+  },
+  mainnet: { 
+    rpcUrl: 'https://soroban.stellar.org', 
+    baseFee: 200000 
+  },
+} as const;
+
+/**
  * Environment variable validation schema
  */
 const envSchema = z.object({
   STELLAR_NETWORK: z.enum(['testnet', 'mainnet']).default('testnet'),
-  STELLAR_RPC_URL: z.string().url().default('https://soroban-testnet.stellar.org'),
+  STELLAR_RPC_URL: z.string().url().optional(),
+  STELLAR_BASE_FEE: z.coerce.number().positive().optional(),
   CONTRACT_ID: z.string().min(1, 'CONTRACT_ID is required'),
   ADMIN_SECRET_KEY: z.string().min(1, 'ADMIN_SECRET_KEY is required'),
   COINGECKO_API_KEY: z.string().optional(),
@@ -155,10 +170,18 @@ export function isSupportedAsset(symbol: string): symbol is SupportedAsset {
  */
 export function loadConfig(): OracleServiceConfig {
   const env = parseEnv();
+  
+  // Get network-specific defaults
+  const networkDefaults = NETWORK_DEFAULTS[env.STELLAR_NETWORK as keyof typeof NETWORK_DEFAULTS];
+  
+  // Use env vars if provided, otherwise use network defaults
+  const stellarRpcUrl = env.STELLAR_RPC_URL || networkDefaults.rpcUrl;
+  const baseFee = env.STELLAR_BASE_FEE || networkDefaults.baseFee;
 
   return {
     stellarNetwork: env.STELLAR_NETWORK,
-    stellarRpcUrl: env.STELLAR_RPC_URL,
+    stellarRpcUrl,
+    baseFee,
     contractId: env.CONTRACT_ID,
     adminSecretKey: env.ADMIN_SECRET_KEY,
     updateIntervalMs: env.UPDATE_INTERVAL_MS,
