@@ -33,6 +33,19 @@ CONTRACT_ID=<your_deployed_contract_id>
 JWT_SECRET=<your_secret_key>
 ```
 
+### Security Configuration
+
+```env
+# Request body size limit (prevents DoS attacks)
+# Examples: 100kb, 1mb, 1gb. Defaults to 100kb if not set.
+# Returns 413 Payload Too Large when exceeded.
+BODY_SIZE_LIMIT=100kb
+
+# Rate limiting (already set by default, configurable)
+RATE_LIMIT_WINDOW_MS=900000
+RATE_LIMIT_MAX_REQUESTS=100
+```
+
 ## API Endpoints
 
 ### Health Check
