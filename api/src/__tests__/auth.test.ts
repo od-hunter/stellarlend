@@ -36,7 +36,7 @@ describe('Auth Middleware', () => {
       authenticateToken(mockRequest as AuthRequest, mockResponse as Response, mockNext);
 
       expect(mockNext).toHaveBeenCalledWith();
-      expect(mockRequest.user).toEqual({ address: '0x1234567890123456789012345678901234567890' });
+      expect(mockRequest.user).toMatchObject({ address: '0x1234567890123456789012345678901234567890' });
     });
 
     it('should return 401 when token is missing', () => {

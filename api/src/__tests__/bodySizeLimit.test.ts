@@ -15,10 +15,16 @@ describe('Body Size Limit Middleware', () => {
       res.status(200).json({ success: true });
     });
     testApp.use(errorHandler);
-    // Restore original limit
-    config.bodySizeLimit.limit = originalLimit;
+    // Don't restore limit here because the request executes asynchronously later.
+    // Instead we'll manage it per-test or use a wrapper.
     return testApp;
   };
+
+  const originalLimit = config.bodySizeLimit.limit;
+  
+  afterEach(() => {
+    config.bodySizeLimit.limit = originalLimit;
+  });
 
   describe('bodySizeLimitMiddleware', () => {
     it('should allow requests with body size within limit', async () => {
