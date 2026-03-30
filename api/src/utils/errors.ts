@@ -25,35 +25,41 @@ export class ApiError extends Error {
 export class ValidationError extends ApiError {
   constructor(message: string) {
     super(400, message, ErrorCode.VALIDATION_ERROR);
+    Object.setPrototypeOf(this, ValidationError.prototype);
   }
 }
 
 export class UnauthorizedError extends ApiError {
   constructor(message = 'Unauthorized') {
     super(401, message, ErrorCode.UNAUTHORIZED);
+    Object.setPrototypeOf(this, UnauthorizedError.prototype);
   }
 }
 
 export class NotFoundError extends ApiError {
   constructor(message = 'Resource not found') {
     super(404, message, ErrorCode.NOT_FOUND);
+    Object.setPrototypeOf(this, NotFoundError.prototype);
   }
 }
 
 export class ConflictError extends ApiError {
   constructor(message: string) {
     super(409, message, ErrorCode.CONFLICT);
+    Object.setPrototypeOf(this, ConflictError.prototype);
   }
 }
 
 export class PayloadTooLargeError extends ApiError {
   constructor(message = 'Request body too large') {
-    super(413, message);
+    super(413, message, ErrorCode.VALIDATION_ERROR);
+    Object.setPrototypeOf(this, PayloadTooLargeError.prototype);
   }
 }
 
 export class InternalServerError extends ApiError {
   constructor(message = 'Internal server error') {
     super(500, message, ErrorCode.INTERNAL_SERVER_ERROR);
+    Object.setPrototypeOf(this, InternalServerError.prototype);
   }
 }

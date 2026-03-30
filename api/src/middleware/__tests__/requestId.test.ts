@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { requestIdMiddleware } from '../requestId';
-import { requestContext } from '../../utils/logger';
+import { requestContext } from '../../utils/requestContext';
 
 describe('requestIdMiddleware', () => {
   let mockRequest: Partial<Request>;

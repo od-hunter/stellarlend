@@ -1,8 +1,6 @@
 import winston from 'winston';
-import { AsyncLocalStorage } from 'async_hooks';
 import { config } from '../config';
-
-export const requestContext = new AsyncLocalStorage<string>();
+import { requestContext } from './requestContext';
 
 const addRequestId = winston.format((info: winston.Logform.TransformableInfo) => {
   const reqId = requestContext.getStore();

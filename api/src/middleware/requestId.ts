@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { randomUUID } from 'crypto';
-import { requestContext } from '../utils/logger';
+import { requestContext } from '../utils/requestContext';
 
 export const requestIdMiddleware = (req: Request, res: Response, next: NextFunction) => {
   const reqId = req.headers['x-request-id'];

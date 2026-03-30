@@ -100,3 +100,18 @@ export const protocolStats = async (_req: Request, res: Response, next: NextFunc
     next(error);
   }
 };
+
+export const getTransactionHistory = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { userAddress } = req.params;
+    const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 10;
+    const cursor = req.query.cursor as string | undefined;
+
+    const stellarService = new StellarService();
+    const history = await stellarService.getTransactionHistory({ userAddress, limit, cursor });
+
+    return res.status(200).json(history);
+  } catch (error) {
+    next(error);
+  }
+};
