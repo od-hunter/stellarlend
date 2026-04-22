@@ -11,6 +11,7 @@ pub mod events_test;
 pub mod integration_test;
 pub mod interest_accrual_test;
 pub mod interest_rate_test;
+pub mod intents_test;
 pub mod liquidate_test;
 pub mod oracle_test;
 pub mod pause_test;

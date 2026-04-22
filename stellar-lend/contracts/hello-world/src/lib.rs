@@ -15,6 +15,7 @@ pub mod events;
 pub mod flash_loan;
 pub mod governance;
 pub mod interest_rate;
+pub mod intents;
 pub mod liquidate;
 pub mod multi_collateral;
 pub mod multisig;
@@ -151,6 +152,50 @@ impl HelloContract {
         borrow::borrow_asset(&env, user, asset, amount).map_err(Into::into)
     }
 
+    /// Meta-tx style borrow: user authorizes intent off-chain, relayer submits.
+    pub fn borrow_asset_intent(
+        env: Env,
+        relayer: Address,
+        user: Address,
+        asset: Option<Address>,
+        amount: i128,
+        nonce: u64,
+        expires_at: u64,
+    ) -> Result<i128, LendingError> {
+        // Relayer must authorize themselves (pays fees).
+        relayer.require_auth();
+
+        // Require user authorization for the typed payload.
+        let mut args = Vec::new(&env);
+        args.push_back(user.clone().into_val(&env));
+        args.push_back(asset.clone().into_val(&env));
+        args.push_back(amount.into_val(&env));
+        intents::require_intent_auth(
+            &env,
+            &user,
+            &soroban_sdk::Symbol::new(&env, "borrow"),
+            nonce,
+            expires_at,
+            args,
+        )
+        .map_err(|_| LendingError::Unauthorized)?;
+
+        // Apply rate limit keyed to user (actor).
+        let pool = asset
+            .clone()
+            .unwrap_or_else(|| env.current_contract_address());
+        rate_limiter::consume(
+            &env,
+            &relayer,
+            &user,
+            &soroban_sdk::Symbol::new(&env, "borrow"),
+            &pool,
+        )
+        .map_err(|_| LendingError::LimitExceeded)?;
+
+        borrow::borrow_asset(&env, user, asset, amount).map_err(Into::into)
+    }
+
     pub fn repay_debt(
         env: Env,
         user: Address,
@@ -190,6 +235,60 @@ impl HelloContract {
             &pool,
         )
         .map_err(|_| LendingError::LimitExceeded)?;
+        liquidate::liquidate(
+            &env,
+            liquidator,
+            borrower,
+            debt_asset,
+            collateral_asset,
+            debt_amount,
+        )
+        .map_err(Into::into)
+    }
+
+    /// Meta-tx style liquidation: liquidator authorizes intent off-chain.
+    pub fn liquidate_intent(
+        env: Env,
+        relayer: Address,
+        liquidator: Address,
+        borrower: Address,
+        debt_asset: Option<Address>,
+        collateral_asset: Option<Address>,
+        debt_amount: i128,
+        nonce: u64,
+        expires_at: u64,
+    ) -> Result<(i128, i128, i128), LendingError> {
+        relayer.require_auth();
+
+        let mut args = Vec::new(&env);
+        args.push_back(liquidator.clone().into_val(&env));
+        args.push_back(borrower.clone().into_val(&env));
+        args.push_back(debt_asset.clone().into_val(&env));
+        args.push_back(collateral_asset.clone().into_val(&env));
+        args.push_back(debt_amount.into_val(&env));
+
+        intents::require_intent_auth(
+            &env,
+            &liquidator,
+            &soroban_sdk::Symbol::new(&env, "liquidate"),
+            nonce,
+            expires_at,
+            args,
+        )
+        .map_err(|_| LendingError::Unauthorized)?;
+
+        let pool = debt_asset
+            .clone()
+            .unwrap_or_else(|| env.current_contract_address());
+        rate_limiter::consume(
+            &env,
+            &relayer,
+            &liquidator,
+            &soroban_sdk::Symbol::new(&env, "liquidate"),
+            &pool,
+        )
+        .map_err(|_| LendingError::LimitExceeded)?;
+
         liquidate::liquidate(
             &env,
             liquidator,
@@ -379,6 +478,11 @@ impl HelloContract {
         offset: u32,
     ) -> Result<Vec<analytics::ActivityEntry>, LendingError> {
         analytics::get_recent_activity(&env, limit, offset).map_err(Into::into)
+    }
+
+    /// Read-only: get next expected nonce for off-chain intents.
+    pub fn get_intent_nonce(env: Env, user: Address, operation: soroban_sdk::Symbol) -> u64 {
+        intents::get_next_nonce(&env, user, operation)
     }
 
     // -------------------------------------------------------------------------
