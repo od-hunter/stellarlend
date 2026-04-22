@@ -63,6 +63,7 @@ const mockStellarService: jest.Mocked<StellarService> = {
       cursor: null,
       hasMore: false,
       limit: 10,
+      total: null,
     },
   }),
 } as any;
@@ -278,7 +279,7 @@ describe('Lending Controller', () => {
       expect(response.body).toHaveProperty('data');
       expect(Array.isArray(response.body.data)).toBe(true);
       expect(response.body).toHaveProperty('pagination');
-      expect(response.body.pagination).toEqual({ cursor: null, hasMore: false, limit: 10 });
+      expect(response.body.pagination).toEqual({ cursor: null, hasMore: false, limit: 10, total: null });
       expect(response.body.data[0]).toMatchObject({ transactionHash: 'tx_hash_1' });
     });
 
@@ -298,6 +299,73 @@ describe('Lending Controller', () => {
 
       expect(response.status).toBe(400);
       expect(response.body.error).toMatch(/cursor/i);
+    });
+
+    it('should reject a cursor that is not valid base64url', async () => {
+      const response = await request(app)
+        .get(`/api/lending/transactions/${userAddress}`)
+        .query({ cursor: '!!!not-a-valid-cursor!!!' });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toMatch(/cursor/i);
+    });
+
+    it('should return an opaque base64url cursor when hasMore is true', async () => {
+      mockStellarService.getTransactionHistory.mockResolvedValueOnce({
+        data: [],
+        pagination: {
+          cursor: 'aGVsbG8',
+          hasMore: true,
+          limit: 10,
+          total: null,
+        },
+      });
+
+      const response = await request(app).get(`/api/lending/transactions/${userAddress}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.pagination.hasMore).toBe(true);
+      expect(response.body.pagination.cursor).not.toBeNull();
+      // Cursor must be a non-empty string opaque to the client
+      expect(typeof response.body.pagination.cursor).toBe('string');
+      expect(response.body.pagination.cursor.length).toBeGreaterThan(0);
+    });
+
+    it('should include total: null on the first page when total count is unavailable', async () => {
+      const response = await request(app).get(`/api/lending/transactions/${userAddress}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.pagination).toHaveProperty('total');
+      expect(response.body.pagination.total).toBeNull();
+    });
+
+    it('should respect a custom limit parameter', async () => {
+      mockStellarService.getTransactionHistory.mockResolvedValueOnce({
+        data: [],
+        pagination: { cursor: null, hasMore: false, limit: 5, total: null },
+      });
+
+      const response = await request(app)
+        .get(`/api/lending/transactions/${userAddress}`)
+        .query({ limit: 5 });
+
+      expect(response.status).toBe(200);
+      expect(response.body.pagination.limit).toBe(5);
+    });
+
+    it('should accept a valid base64url cursor and forward it', async () => {
+      const rawCursor = 'some-horizon-cursor-token';
+      const encodedCursor = Buffer.from(rawCursor, 'utf8').toString('base64url');
+
+      const response = await request(app)
+        .get(`/api/lending/transactions/${userAddress}`)
+        .query({ cursor: encodedCursor });
+
+      expect(response.status).toBe(200);
+      // Service should have been called with the decoded raw cursor
+      expect(mockStellarService.getTransactionHistory).toHaveBeenCalledWith(
+        expect.objectContaining({ cursor: rawCursor })
+      );
     });
   });
 
