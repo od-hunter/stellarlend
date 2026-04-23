@@ -12,11 +12,13 @@ mod withdraw;
 // Re-export contract types used in the public interface so downstream tooling
 // (including fuzzing harnesses) can construct/inspect them without relying on
 // private module paths.
-pub use borrow::{BorrowCollateral, BorrowError, DebtPosition};
+pub use borrow::{BorrowCollateral, BorrowError, DebtPosition, StablecoinConfig};
 pub use deposit::{DepositCollateral, DepositError};
 pub use flash_loan::FlashLoanError;
 pub use pause::PauseType;
-pub use views::UserPositionSummary;
+pub use views::{
+    ProtocolMetrics, ProtocolReport, StablecoinAssetStats, UserPositionSummary,
+};
 pub use withdraw::WithdrawError;
 
 use borrow::{
@@ -26,6 +28,8 @@ use borrow::{
     set_admin as set_borrow_admin,
     set_liquidation_threshold_bps as set_liquidation_threshold_logic,
     set_oracle as set_oracle_logic,
+    set_stablecoin_config as set_stablecoin_config_logic,
+    get_stablecoin_config as get_stablecoin_config_logic,
 };
 use deposit::{
     deposit as deposit_logic, get_user_collateral as get_deposit_collateral,
@@ -72,6 +76,8 @@ mod upgrade_test;
 mod views_test;
 #[cfg(test)]
 mod withdraw_test;
+#[cfg(test)]
+mod stablecoin_test;
 
 #[contract]
 pub struct LendingContract;
@@ -332,5 +338,28 @@ impl LendingContract {
         min_borrow_amount: i128,
     ) -> Result<(), BorrowError> {
         initialize_borrow_logic(&env, debt_ceiling, min_borrow_amount)
+    }
+
+    /// Set stablecoin configuration for an asset (admin only)
+    pub fn set_stablecoin_config(
+        env: Env,
+        admin: Address,
+        asset: Address,
+        config: StablecoinConfig,
+    ) -> Result<(), BorrowError> {
+        set_stablecoin_config_logic(&env, &admin, asset, config)
+    }
+
+    /// Get stablecoin configuration for an asset
+    pub fn get_stablecoin_config(env: Env, asset: Address) -> Option<StablecoinConfig> {
+        get_stablecoin_config_logic(&env, &asset)
+    }
+
+    /// Get protocol report including stablecoin stats
+    pub fn get_protocol_report(
+        env: Env,
+        stablecoin_assets: Vec<Address>,
+    ) -> ProtocolReport {
+        views::get_protocol_report(&env, stablecoin_assets)
     }
 }
