@@ -15,16 +15,19 @@ pub mod events;
 pub mod flash_loan;
 pub mod governance;
 pub mod interest_rate;
+pub mod intents;
 pub mod liquidate;
 pub mod multi_collateral;
 pub mod multisig;
 pub mod oracle;
 pub mod recovery;
+pub mod rate_limiter;
 pub mod reentrancy;
 pub mod repay;
 pub mod reserve;
 pub mod risk_management;
 pub mod risk_params;
+pub mod safe_math;
 pub mod storage;
 pub mod treasury;
 pub mod types;
@@ -134,6 +137,62 @@ impl HelloContract {
         asset: Option<Address>,
         amount: i128,
     ) -> Result<i128, LendingError> {
+        // Rate limiting: per-user and global-per-pool (pool = asset or native sentinel)
+        let pool = asset
+            .clone()
+            .unwrap_or_else(|| env.current_contract_address());
+        rate_limiter::consume(
+            &env,
+            &user, // caller is the authenticated user in this entrypoint
+            &user,
+            &soroban_sdk::Symbol::new(&env, "borrow"),
+            &pool,
+        )
+        .map_err(|_| LendingError::LimitExceeded)?;
+        borrow::borrow_asset(&env, user, asset, amount).map_err(Into::into)
+    }
+
+    /// Meta-tx style borrow: user authorizes intent off-chain, relayer submits.
+    pub fn borrow_asset_intent(
+        env: Env,
+        relayer: Address,
+        user: Address,
+        asset: Option<Address>,
+        amount: i128,
+        nonce: u64,
+        expires_at: u64,
+    ) -> Result<i128, LendingError> {
+        // Relayer must authorize themselves (pays fees).
+        relayer.require_auth();
+
+        // Require user authorization for the typed payload.
+        let mut args = Vec::new(&env);
+        args.push_back(user.clone().into_val(&env));
+        args.push_back(asset.clone().into_val(&env));
+        args.push_back(amount.into_val(&env));
+        intents::require_intent_auth(
+            &env,
+            &user,
+            &soroban_sdk::Symbol::new(&env, "borrow"),
+            nonce,
+            expires_at,
+            args,
+        )
+        .map_err(|_| LendingError::Unauthorized)?;
+
+        // Apply rate limit keyed to user (actor).
+        let pool = asset
+            .clone()
+            .unwrap_or_else(|| env.current_contract_address());
+        rate_limiter::consume(
+            &env,
+            &relayer,
+            &user,
+            &soroban_sdk::Symbol::new(&env, "borrow"),
+            &pool,
+        )
+        .map_err(|_| LendingError::LimitExceeded)?;
+
         borrow::borrow_asset(&env, user, asset, amount).map_err(Into::into)
     }
 
@@ -164,6 +223,72 @@ impl HelloContract {
         debt_amount: i128,
     ) -> Result<(i128, i128, i128), LendingError> {
         liquidator.require_auth();
+        // Rate limiting: liquidator is the actor. Pool key uses the debt asset (or native sentinel).
+        let pool = debt_asset
+            .clone()
+            .unwrap_or_else(|| env.current_contract_address());
+        rate_limiter::consume(
+            &env,
+            &liquidator,
+            &liquidator,
+            &soroban_sdk::Symbol::new(&env, "liquidate"),
+            &pool,
+        )
+        .map_err(|_| LendingError::LimitExceeded)?;
+        liquidate::liquidate(
+            &env,
+            liquidator,
+            borrower,
+            debt_asset,
+            collateral_asset,
+            debt_amount,
+        )
+        .map_err(Into::into)
+    }
+
+    /// Meta-tx style liquidation: liquidator authorizes intent off-chain.
+    pub fn liquidate_intent(
+        env: Env,
+        relayer: Address,
+        liquidator: Address,
+        borrower: Address,
+        debt_asset: Option<Address>,
+        collateral_asset: Option<Address>,
+        debt_amount: i128,
+        nonce: u64,
+        expires_at: u64,
+    ) -> Result<(i128, i128, i128), LendingError> {
+        relayer.require_auth();
+
+        let mut args = Vec::new(&env);
+        args.push_back(liquidator.clone().into_val(&env));
+        args.push_back(borrower.clone().into_val(&env));
+        args.push_back(debt_asset.clone().into_val(&env));
+        args.push_back(collateral_asset.clone().into_val(&env));
+        args.push_back(debt_amount.into_val(&env));
+
+        intents::require_intent_auth(
+            &env,
+            &liquidator,
+            &soroban_sdk::Symbol::new(&env, "liquidate"),
+            nonce,
+            expires_at,
+            args,
+        )
+        .map_err(|_| LendingError::Unauthorized)?;
+
+        let pool = debt_asset
+            .clone()
+            .unwrap_or_else(|| env.current_contract_address());
+        rate_limiter::consume(
+            &env,
+            &relayer,
+            &liquidator,
+            &soroban_sdk::Symbol::new(&env, "liquidate"),
+            &pool,
+        )
+        .map_err(|_| LendingError::LimitExceeded)?;
+
         liquidate::liquidate(
             &env,
             liquidator,
@@ -323,9 +448,41 @@ impl HelloContract {
         analytics::calculate_health_factor(&env, &user).map_err(Into::into)
     }
 
+    /// Read-only protocol metrics snapshot.
+    pub fn get_protocol_stats(env: Env) -> Result<analytics::ProtocolMetrics, LendingError> {
+        analytics::get_protocol_stats(&env).map_err(Into::into)
+    }
+
+    /// Read-only protocol analytics report.
+    pub fn get_protocol_report(env: Env) -> Result<analytics::ProtocolReport, LendingError> {
+        analytics::generate_protocol_report(&env).map_err(Into::into)
+    }
+
     /// Read-only user position query.
     pub fn get_user_position(env: Env, user: Address) -> Result<Position, LendingError> {
         analytics::get_user_position_summary(&env, &user).map_err(Into::into)
+    }
+
+    /// Read-only user analytics report.
+    pub fn get_user_report(
+        env: Env,
+        user: Address,
+    ) -> Result<analytics::UserReport, LendingError> {
+        analytics::generate_user_report(&env, &user).map_err(Into::into)
+    }
+
+    /// Read-only recent protocol activity feed query.
+    pub fn get_recent_activity(
+        env: Env,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<analytics::ActivityEntry>, LendingError> {
+        analytics::get_recent_activity(&env, limit, offset).map_err(Into::into)
+    }
+
+    /// Read-only: get next expected nonce for off-chain intents.
+    pub fn get_intent_nonce(env: Env, user: Address, operation: soroban_sdk::Symbol) -> u64 {
+        intents::get_next_nonce(&env, user, operation)
     }
 
     // -------------------------------------------------------------------------
@@ -357,163 +514,70 @@ impl HelloContract {
     }
 
     // -------------------------------------------------------------------------
-    // Governance: Core Functions
+    // Rate limiting configuration & monitoring
     // -------------------------------------------------------------------------
 
-    /// Create a new governance proposal.
-    pub fn gov_create_proposal(
-        env: Env,
-        proposer: Address,
-        proposal_type: types::ProposalType,
-        description: String,
-        voting_threshold: Option<i128>,
-    ) -> Result<u64, LendingError> {
-        governance::create_proposal(&env, proposer, proposal_type, description, voting_threshold)
-            .map_err(Into::into)
-    }
-
-    /// Cast a vote on a proposal.
-    pub fn gov_vote(
-        env: Env,
-        voter: Address,
-        proposal_id: u64,
-        vote_type: types::VoteType,
-    ) -> Result<(), LendingError> {
-        governance::vote(&env, voter, proposal_id, vote_type).map_err(Into::into)
-    }
-
-    /// Queue a proposal after voting ends.
-    pub fn gov_queue_proposal(
+    /// Admin-only: configure default rate limits for an operation.
+    pub fn configure_rate_limit_operation(
         env: Env,
         caller: Address,
-        proposal_id: u64,
-    ) -> Result<types::ProposalOutcome, LendingError> {
-        governance::queue_proposal(&env, caller, proposal_id).map_err(Into::into)
-    }
-
-    /// Execute a queued proposal.
-    pub fn gov_execute_proposal(
-        env: Env,
-        executor: Address,
-        proposal_id: u64,
+        operation: soroban_sdk::Symbol,
+        cfg: rate_limiter::RateLimitConfig,
     ) -> Result<(), LendingError> {
-        governance::execute_proposal(&env, executor, proposal_id).map_err(Into::into)
+        rate_limiter::configure_operation_limit(&env, caller, operation, cfg)
+            .map_err(|e| match e {
+                rate_limiter::RateLimitError::Unauthorized => LendingError::Unauthorized,
+                rate_limiter::RateLimitError::InvalidConfig => LendingError::InvalidParameter,
+                _ => LendingError::InvalidParameter,
+            })
     }
 
-    /// Cancel a proposal (proposer or admin only).
-    pub fn gov_cancel_proposal(
+    /// Admin-only: configure global-per-pool rate limits for an operation.
+    pub fn configure_rate_limit_pool(
         env: Env,
         caller: Address,
-        proposal_id: u64,
+        operation: soroban_sdk::Symbol,
+        pool: Address,
+        cfg: rate_limiter::RateLimitConfig,
     ) -> Result<(), LendingError> {
-        governance::cancel_proposal(&env, caller, proposal_id).map_err(Into::into)
+        rate_limiter::configure_pool_limit(&env, caller, operation, pool, cfg).map_err(|e| match e {
+            rate_limiter::RateLimitError::Unauthorized => LendingError::Unauthorized,
+            rate_limiter::RateLimitError::InvalidConfig => LendingError::InvalidParameter,
+            _ => LendingError::InvalidParameter,
+        })
     }
 
-    /// Approve a proposal (multisig admin only).
-    pub fn gov_approve_proposal(
-        env: Env,
-        approver: Address,
-        proposal_id: u64,
-    ) -> Result<(), LendingError> {
-        governance::approve_proposal(&env, approver, proposal_id).map_err(Into::into)
-    }
-
-    /// Create an emergency proposal (multisig admin only).
-    pub fn gov_create_emergency_proposal(
+    /// Admin-only: grant/revoke extra burst capacity for a (user, operation) pair.
+    pub fn set_user_rate_limit_grace(
         env: Env,
         caller: Address,
-        proposal_type: types::ProposalType,
-        description: String,
-    ) -> Result<u64, LendingError> {
-        governance::create_emergency_proposal(&env, caller, proposal_type, description)
-            .map_err(Into::into)
-    }
-
-    /// Get a proposal by ID.
-    pub fn gov_get_proposal(env: Env, proposal_id: u64) -> Option<types::Proposal> {
-        governance::get_proposal(&env, proposal_id)
-    }
-
-    /// Get governance configuration.
-    pub fn gov_get_config(env: Env) -> Option<types::GovernanceConfig> {
-        governance::get_config(&env)
-    }
-
-    /// Add a guardian (admin only).
-    pub fn gov_add_guardian(
-        env: Env,
-        caller: Address,
-        guardian: Address,
+        user: Address,
+        operation: soroban_sdk::Symbol,
+        enabled: bool,
     ) -> Result<(), LendingError> {
-        governance::add_guardian(&env, caller, guardian).map_err(Into::into)
+        rate_limiter::set_user_grace(&env, caller, user, operation, enabled).map_err(|e| match e {
+            rate_limiter::RateLimitError::Unauthorized => LendingError::Unauthorized,
+            _ => LendingError::InvalidParameter,
+        })
     }
 
-    /// Remove a guardian (admin only).
-    pub fn gov_remove_guardian(
+    /// Read-only: returns per-user bucket status.
+    pub fn get_user_rate_limit_status(
         env: Env,
-        caller: Address,
-        guardian: Address,
-    ) -> Result<(), LendingError> {
-        governance::remove_guardian(&env, caller, guardian).map_err(Into::into)
+        user: Address,
+        operation: soroban_sdk::Symbol,
+        pool: Address,
+    ) -> rate_limiter::RateLimitStatus {
+        rate_limiter::get_user_status(&env, user, operation, pool)
     }
 
-    /// Get guardian configuration.
-    pub fn gov_get_guardian_config(env: Env) -> Option<storage::GuardianConfig> {
-        env.storage()
-            .instance()
-            .get(&storage::GovernanceDataKey::GuardianConfig)
-    }
-
-    // -------------------------------------------------------------------------
-    // Governance: Flash Loan Attack Protection
-    // -------------------------------------------------------------------------
-
-    /// Delegate vote power to another address.
-    /// Must be called at least DELEGATION_DEADLINE seconds before a proposal
-    /// is created for the delegation to count toward that proposal.
-    pub fn gov_delegate_vote(
+    /// Read-only: returns global-per-pool bucket status.
+    pub fn get_global_rate_limit_status(
         env: Env,
-        delegator: Address,
-        delegatee: Address,
-    ) -> Result<(), LendingError> {
-        governance::delegate_vote(&env, delegator, delegatee).map_err(Into::into)
-    }
-
-    /// Revoke an existing vote delegation.
-    pub fn gov_revoke_delegation(env: Env, delegator: Address) -> Result<(), LendingError> {
-        governance::revoke_delegation(&env, delegator).map_err(Into::into)
-    }
-
-    /// Query whether an address currently has its tokens locked due to an active vote.
-    pub fn gov_is_vote_locked(env: Env, voter: Address) -> bool {
-        governance::is_vote_locked(&env, &voter)
-    }
-
-    /// Query the vote lock record for an address.
-    pub fn gov_get_vote_lock(env: Env, voter: Address) -> Option<governance::VoteLock> {
-        governance::get_vote_lock(&env, &voter)
-    }
-
-    /// Query the vote power snapshot for a voter on a specific proposal.
-    pub fn gov_get_vote_power_snapshot(
-        env: Env,
-        proposal_id: u64,
-        voter: Address,
-    ) -> Option<governance::VotePowerSnapshot> {
-        governance::get_vote_power_snapshot(&env, proposal_id, &voter)
-    }
-
-    /// Query the delegation record for a delegator.
-    pub fn gov_get_delegation(
-        env: Env,
-        delegator: Address,
-    ) -> Option<governance::DelegationRecord> {
-        governance::get_delegation(&env, &delegator)
-    }
-
-    /// Query governance analytics (for attack detection monitoring).
-    pub fn gov_get_analytics(env: Env) -> governance::GovernanceAnalytics {
-        governance::get_governance_analytics(&env)
+        operation: soroban_sdk::Symbol,
+        pool: Address,
+    ) -> rate_limiter::RateLimitStatus {
+        rate_limiter::get_global_status(&env, operation, pool)
     }
 }
 
