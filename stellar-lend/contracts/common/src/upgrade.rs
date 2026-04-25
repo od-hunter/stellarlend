@@ -3,66 +3,9 @@ use crate::events::{
     UpgradeExecutedEvent, UpgradeInitEvent, UpgradeProposedEvent, UpgradeRollbackEvent,
 };
 use soroban_sdk::{
-    contract, contractevent, contracterror, contractimpl, contracttype, panic_with_error, Address,
-    BytesN, Env, Vec,
+    contract, contracterror, contractimpl, contracttype, panic_with_error, Address, BytesN, Env,
+    Vec,
 };
-
-#[contractevent(topics = ["up_init"], data_format = "single-value")]
-#[derive(Clone, Debug)]
-pub struct UpgradeInitEvent {
-    #[topic]
-    pub admin: Address,
-    pub required_approvals: u32,
-}
-
-#[contractevent(topics = ["up_apadd"], data_format = "single-value")]
-#[derive(Clone, Debug)]
-pub struct UpgradeApproverAddedEvent {
-    #[topic]
-    pub caller: Address,
-    #[topic]
-    pub approver: Address,
-}
-
-#[contractevent(topics = ["up_prop"], data_format = "single-value")]
-#[derive(Clone, Debug)]
-pub struct UpgradeProposedEvent {
-    #[topic]
-    pub caller: Address,
-    #[topic]
-    pub id: u64,
-    pub new_version: u32,
-}
-
-#[contractevent(topics = ["up_appr"], data_format = "single-value")]
-#[derive(Clone, Debug)]
-pub struct UpgradeApprovalRecordedEvent {
-    #[topic]
-    pub caller: Address,
-    #[topic]
-    pub proposal_id: u64,
-    pub approval_count: u32,
-}
-
-#[contractevent(topics = ["up_exec"], data_format = "single-value")]
-#[derive(Clone, Debug)]
-pub struct UpgradeExecutedEvent {
-    #[topic]
-    pub caller: Address,
-    #[topic]
-    pub proposal_id: u64,
-    pub new_version: u32,
-}
-
-#[contractevent(topics = ["up_roll"], data_format = "single-value")]
-#[derive(Clone, Debug)]
-pub struct UpgradeRollbackEvent {
-    #[topic]
-    pub caller: Address,
-    #[topic]
-    pub proposal_id: u64,
-    pub prev_version: u32,
-}
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -195,22 +138,6 @@ impl UpgradeManager {
         caller.require_auth();
         Self::assert_initialized(&env);
         Self::assert_admin(&env, &caller);
-
-        let mut approvers = Self::approvers(&env);
-        if let Some(idx) = approvers.iter().position(|a| a == approver) {
-            approvers.remove(idx as u32);
-            env.storage()
-                .persistent()
-                .set(&UpgradeKey::Approvers, &approvers);
-        let admin: Address = env
-            .storage()
-            .persistent()
-            .get(&UpgradeKey::Admin)
-            .unwrap_or_else(|| panic_with_error!(&env, UpgradeError::NotInitialized));
-
-        if approver == admin {
-            panic_with_error!(&env, UpgradeError::NotAuthorized);
-        }
 
         let required = Self::required_approvals(env.clone());
         let mut approvers = Self::approvers(&env);
