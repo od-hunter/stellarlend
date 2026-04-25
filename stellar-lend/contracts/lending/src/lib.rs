@@ -1,5 +1,4 @@
-#![no_std]
-use soroban_sdk::{contract, contractimpl, Address, Bytes, Env, Val, Vec};
+//! Standardized contract events (V1 schema)
 
 use soroban_sdk::contracttype;
 
@@ -7,9 +6,43 @@ pub mod borrow;
 mod deposit;
 pub mod events;
 mod flash_loan;
+pub mod invariants;
 pub mod pause;
 mod token_receiver;
 mod withdraw;
+pub mod yield_farming;
+use soroban_sdk::{contractevent, Address, Symbol};
+
+// ─────────────────────────────────────────
+// Shared constants
+// ─────────────────────────────────────────
+
+const BORROW: Symbol = Symbol::short("borrow");
+const REPAY: Symbol = Symbol::short("repay");
+const DEPOSIT: Symbol = Symbol::short("deposit");
+const WITHDRAW: Symbol = Symbol::short("withdraw");
+const FLASH_LOAN: Symbol = Symbol::short("flash");
+const BAD_DEBT: Symbol = Symbol::short("baddebt");
+const BAD_DEBT_RECOVER: Symbol = Symbol::short("bdrec");
+
+// ─────────────────────────────────────────
+// Lending Events (STANDARDIZED)
+// ─────────────────────────────────────────
+
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct BorrowEventV1 {
+    #[topic]
+    pub event: Symbol, // "borrow"
+
+    #[topic]
+    pub user: Address,
+
+    pub asset: Address,
+    pub amount: i128,
+    pub collateral: i128,
+    pub timestamp: u64,
+}
 
 // Re-export contract types used in the public interface so downstream tooling
 // (including fuzzing harnesses) can construct/inspect them without relying on
@@ -255,169 +288,127 @@ impl LendingContract {
     pub fn get_user_debt(env: Env, user: Address) -> DebtPosition {
         get_borrow_debt(&env, &user)
     }
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct RepayEventV1 {
+    #[topic]
+    pub event: Symbol, // "repay"
 
-    /// Get user's collateral position (borrow module)
-    pub fn get_user_collateral(env: Env, user: Address) -> BorrowCollateral {
-        get_borrow_collateral(&env, &user)
-    }
+    #[topic]
+    pub user: Address,
 
-    // ═══════════════════════════════════════════════════════════════════
-    // View functions (read-only; for frontends and liquidations)
-    // ═══════════════════════════════════════════════════════════════════
+    pub asset: Address,
+    pub amount: i128,
+    pub timestamp: u64,
+}
 
-    /// Returns the user's collateral balance (raw amount).
-    pub fn get_collateral_balance(env: Env, user: Address) -> i128 {
-        view_collateral_balance(&env, &user)
-    }
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct DepositEventV1 {
+    #[topic]
+    pub event: Symbol, // "deposit"
 
-    /// Returns the user's debt balance (principal + accrued interest).
-    pub fn get_debt_balance(env: Env, user: Address) -> i128 {
-        view_debt_balance(&env, &user)
-    }
+    #[topic]
+    pub user: Address,
 
-    /// Returns the user's collateral value in common unit (e.g. USD 8 decimals). 0 if oracle not set.
-    pub fn get_collateral_value(env: Env, user: Address) -> i128 {
-        view_collateral_value(&env, &user)
-    }
+    pub asset: Address,
+    pub amount: i128,
+    pub new_balance: i128,
+    pub timestamp: u64,
+}
 
-    /// Returns the user's debt value in common unit. 0 if oracle not set.
-    pub fn get_debt_value(env: Env, user: Address) -> i128 {
-        view_debt_value(&env, &user)
-    }
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct WithdrawEventV1 {
+    #[topic]
+    pub event: Symbol, // "withdraw"
 
-    /// Returns health factor (scaled 10000 = 1.0). Above 10000 = healthy; below = liquidatable.
-    pub fn get_health_factor(env: Env, user: Address) -> i128 {
-        view_health_factor(&env, &user)
-    }
+    #[topic]
+    pub user: Address,
 
-    /// Returns full position summary: collateral/debt balances and values, and health factor.
-    pub fn get_user_position(env: Env, user: Address) -> UserPositionSummary {
-        view_user_position(&env, &user)
-    }
+    pub asset: Address,
+    pub amount: i128,
+    pub remaining_balance: i128,
+    pub timestamp: u64,
+}
 
-    /// Set oracle address for price feeds (admin only).
-    pub fn set_oracle(env: Env, admin: Address, oracle: Address) -> Result<(), BorrowError> {
-        set_oracle_logic(&env, &admin, oracle)
-    }
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct FlashLoanEventV1 {
+    #[topic]
+    pub event: Symbol, // "flash"
 
-    /// Set liquidation threshold in basis points, e.g. 8000 = 80% (admin only).
-    pub fn set_liquidation_threshold_bps(
-        env: Env,
-        admin: Address,
-        bps: i128,
-    ) -> Result<(), BorrowError> {
-        set_liquidation_threshold_logic(&env, &admin, bps)
-    }
+    #[topic]
+    pub receiver: Address,
 
-    /// Initialize deposit settings (admin only)
-    pub fn initialize_deposit_settings(
-        env: Env,
-        deposit_cap: i128,
-        min_deposit_amount: i128,
-    ) -> Result<(), DepositError> {
-        initialize_deposit_logic(&env, deposit_cap, min_deposit_amount)
-    }
+    pub asset: Address,
+    pub amount: i128,
+    pub fee: i128,
+    pub timestamp: u64,
+}
 
-    /// Set deposit pause state (admin only)
-    /// Deprecated: use set_pause instead
-    pub fn set_deposit_paused(env: Env, paused: bool) -> Result<(), DepositError> {
-        env.storage()
-            .persistent()
-            .set(&pause::PauseDataKey::State(PauseType::Deposit), &paused);
-        Ok(())
-    }
+// ─────────────────────────────────────────
+// Bad Debt Events (NEW)
+// ─────────────────────────────────────────
 
-    /// Get user's deposit collateral position
-    pub fn get_user_collateral_deposit(
-        env: Env,
-        user: Address,
-        asset: Address,
-    ) -> DepositCollateral {
-        get_deposit_collateral(&env, &user, &asset)
-    }
-    /// Get protocol admin
-    pub fn get_admin(env: Env) -> Option<Address> {
-        get_borrow_admin(&env)
-    }
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct BadDebtEventV1 {
+    #[topic]
+    pub event: Symbol, // "baddebt"
 
-    /// Execute a flash loan
-    pub fn flash_loan(
-        env: Env,
-        receiver: Address,
-        asset: Address,
-        amount: i128,
-        params: Bytes,
-    ) -> Result<(), FlashLoanError> {
-        flash_loan_logic(&env, receiver, asset, amount, params)
-    }
+    #[topic]
+    pub user: Address,
 
-    /// Set the flash loan fee in basis points (admin only)
-    pub fn set_flash_loan_fee_bps(env: Env, fee_bps: i128) -> Result<(), FlashLoanError> {
-        let current_admin = get_borrow_admin(&env).ok_or(FlashLoanError::Unauthorized)?;
-        current_admin.require_auth();
-        set_flash_loan_fee_logic(&env, fee_bps)
-    }
+    pub amount: i128,
+    pub timestamp: u64,
+}
 
-    /// Withdraw collateral from the protocol
-    pub fn withdraw(
-        env: Env,
-        user: Address,
-        asset: Address,
-        amount: i128,
-    ) -> Result<i128, WithdrawError> {
-        if is_paused(&env, PauseType::Withdraw) {
-            return Err(WithdrawError::WithdrawPaused);
-        }
-        withdraw_logic(&env, user, asset, amount)
-    }
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct BadDebtRecoveredEventV1 {
+    #[topic]
+    pub event: Symbol, // "bdrec"
 
-    /// Initialize withdraw settings (admin only)
-    pub fn initialize_withdraw_settings(
-        env: Env,
-        min_withdraw_amount: i128,
-    ) -> Result<(), WithdrawError> {
-        initialize_withdraw_logic(&env, min_withdraw_amount)
-    }
+    pub amount: i128,
+    pub timestamp: u64,
+}
 
-    /// Set withdraw pause state (admin only)
-    pub fn set_withdraw_paused(env: Env, paused: bool) -> Result<(), WithdrawError> {
-        set_withdraw_paused_logic(&env, paused)
-    }
+use soroban_sdk::Env;
 
-    /// Token receiver hook
-    pub fn receive(
-        env: Env,
-        token_asset: Address,
-        from: Address,
-        amount: i128,
-        payload: Vec<Val>,
-    ) -> Result<(), BorrowError> {
-        receive_logic(env, token_asset, from, amount, payload)
+pub fn emit_borrow(env: &Env, user: Address, asset: Address, amount: i128, collateral: i128) {
+    BorrowEventV1 {
+        event: BORROW,
+        user,
+        asset,
+        amount,
+        collateral,
+        timestamp: env.ledger().timestamp(),
     }
+    .publish(env);
+}
 
-    /// Initialize borrow settings (admin only)
-    pub fn initialize_borrow_settings(
-        env: Env,
-        debt_ceiling: i128,
-        min_borrow_amount: i128,
-    ) -> Result<(), BorrowError> {
-        initialize_borrow_logic(&env, debt_ceiling, min_borrow_amount)
+pub fn emit_deposit(env: &Env, user: Address, asset: Address, amount: i128, balance: i128) {
+    DepositEventV1 {
+        event: DEPOSIT,
+        user,
+        asset,
+        amount,
+        new_balance: balance,
+        timestamp: env.ledger().timestamp(),
     }
+    .publish(env);
+}
 
-    /// Set stablecoin configuration for an asset (admin only)
-    pub fn set_stablecoin_config(
-        env: Env,
-        admin: Address,
-        asset: Address,
-        config: StablecoinConfig,
-    ) -> Result<(), BorrowError> {
-        set_stablecoin_config_logic(&env, &admin, asset, config)
+pub fn emit_bad_debt(env: &Env, user: &Address, amount: i128) {
+    BadDebtEventV1 {
+        event: BAD_DEBT,
+        user: user.clone(),
+        amount,
+        timestamp: env.ledger().timestamp(),
     }
-
-    /// Get stablecoin configuration for an asset
-    pub fn get_stablecoin_config(env: Env, asset: Address) -> Option<StablecoinConfig> {
-        get_stablecoin_config_logic(&env, &asset)
-    }
+    .publish(env);
+}
 
     /// Get protocol report including stablecoin stats
     pub fn get_protocol_report(env: Env, stablecoin_assets: Vec<Address>) -> ProtocolReport {
@@ -454,4 +445,11 @@ impl LendingContract {
 
         Ok(())
     }
+pub fn emit_bad_debt_recovered(env: &Env, amount: i128) {
+    BadDebtRecoveredEventV1 {
+        event: BAD_DEBT_RECOVER,
+        amount,
+        timestamp: env.ledger().timestamp(),
+    }
+    .publish(env);
 }
