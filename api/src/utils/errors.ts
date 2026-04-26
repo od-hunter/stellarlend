@@ -48,7 +48,7 @@ export class ConflictError extends ApiError {
 
 export class PayloadTooLargeError extends ApiError {
   constructor(message = 'Request body too large') {
-    super(413, message);
+    super(413, message, ErrorCode.VALIDATION_ERROR);
   }
 }
 

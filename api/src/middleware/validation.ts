@@ -4,6 +4,7 @@ import { ValidationError } from '../utils/errors';
 import { StrKey } from '@stellar/stellar-sdk';
 
 const VALID_OPERATIONS = ['deposit', 'borrow', 'repay', 'withdraw'];
+const VALID_IMPORT_FORMATS = ['csv', 'json'];
 
 export const validateRequest = (req: Request, res: Response, next: NextFunction) => {
   const errors = validationResult(req);
@@ -27,7 +28,6 @@ export const amountValidation = [
       try {
         const str = String(value).trim();
 
-        // Strict integer check: reject floats, scientific notation, empty, etc.
         if (!/^\+?\d+$/.test(str)) {
           throw new Error(errMsg);
         }
@@ -37,7 +37,6 @@ export const amountValidation = [
           throw new Error(errMsg);
         }
 
-        // Ensure it fits into signed i128 which is what the contract expects.
         const maxI128 = (1n << 127n) - 1n;
         if (amount > maxI128) {
           throw new Error(errMsg);
@@ -50,10 +49,6 @@ export const amountValidation = [
     }),
 ];
 
-/**
- * Factory function to create lending validation middleware
- * Allows for future customization per operation if needed
- */
 const createLendingValidation = () => [
   param('operation')
     .isIn(VALID_OPERATIONS)
@@ -76,7 +71,10 @@ export const prepareValidation = createLendingValidation();
 
 export const submitValidation = [
   body('signedXdr').isString().notEmpty().withMessage('signedXdr is required'),
-  body('operation').optional().isIn(VALID_OPERATIONS).withMessage(`Operation must be one of: ${VALID_OPERATIONS.join(', ')}`),
+  body('operation')
+    .optional()
+    .isIn(VALID_OPERATIONS)
+    .withMessage(`Operation must be one of: ${VALID_OPERATIONS.join(', ')}`),
   body('userAddress').optional().custom((value) => {
     if (value && !StrKey.isValidEd25519PublicKey(value)) {
       throw new Error('Invalid Stellar address');
@@ -85,7 +83,7 @@ export const submitValidation = [
   }),
   body('amount').optional().custom((value) => {
     if (!value) return true;
-    
+
     const errMsg = 'Amount must be a valid positive integer';
     try {
       const str = String(value).trim();
@@ -105,11 +103,46 @@ export const submitValidation = [
       throw new Error(errMsg);
     }
   }),
-  body('assetAddress').optional().isString().notEmpty().withMessage('Asset address must be a string'),
+  body('assetAddress')
+    .optional()
+    .isString()
+    .notEmpty()
+    .withMessage('Asset address must be a string'),
   validateRequest,
 ];
 
-// Kept for backward compatibility — deprecated, will be removed in v2
+export const importRequestValidation = [
+  body('merchantId').isString().notEmpty().withMessage('merchantId is required'),
+  body('format')
+    .isIn(VALID_IMPORT_FORMATS)
+    .withMessage(`format must be one of: ${VALID_IMPORT_FORMATS.join(', ')}`),
+  body('data')
+    .custom((value) => typeof value === 'string' || Array.isArray(value))
+    .withMessage('data must be a CSV string or JSON array'),
+  body('columnMapping')
+    .optional()
+    .custom((value) => {
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+        throw new Error('columnMapping must be an object');
+      }
+      return true;
+    }),
+  body('options')
+    .optional()
+    .custom((value) => {
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+        throw new Error('options must be an object');
+      }
+      return true;
+    }),
+  validateRequest,
+];
+
+export const merchantParamValidation = [
+  param('merchantId').isString().notEmpty().withMessage('merchantId is required'),
+  validateRequest,
+];
+
 export const depositValidation = createLendingValidation();
 export const borrowValidation = createLendingValidation();
 export const repayValidation = createLendingValidation();

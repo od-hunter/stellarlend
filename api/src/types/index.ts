@@ -136,14 +136,10 @@ export interface TransactionHistoryItem {
   memo?: string;
 }
 
-export interface TransactionHistoryResponse {
-  transactions: TransactionHistoryItem[];
-  pagination: {
-    cursor?: string;
-    hasNextPage: boolean;
-    limit: number;
-  };
-}
+import { PaginatedResponse } from './pagination';
+export * from './subscriptions';
+
+export type TransactionHistoryResponse = PaginatedResponse<TransactionHistoryItem>;
 
 export interface TransactionHistoryQuery {
   userAddress: string;
