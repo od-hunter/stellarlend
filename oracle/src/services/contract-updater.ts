@@ -3,6 +3,7 @@
  */
 
 import {
+  Account,
   Keypair,
   Contract,
   rpc,
@@ -25,6 +26,8 @@ export interface ContractUpdaterConfig {
   contractId: string;
   /** Admin secret key for signing */
   adminSecretKey: string;
+  baseFee: number;
+  maxFee: number;
   maxRetries: number;
   retryDelayMs: number;
 }
@@ -33,9 +36,13 @@ export interface ContractUpdaterConfig {
  * Default configuration
  */
 const DEFAULT_CONFIG: Partial<ContractUpdaterConfig> = {
+  baseFee: 100000,
+  maxFee: 1000000,
   maxRetries: 3,
   retryDelayMs: 1000,
 };
+
+const MIN_TRANSACTION_FEE = 100;
 
 /**
  * Contract Updater
@@ -49,6 +56,14 @@ export class ContractUpdater {
   constructor(config: ContractUpdaterConfig) {
     this.config = { ...DEFAULT_CONFIG, ...config } as ContractUpdaterConfig;
 
+    if (this.config.baseFee < MIN_TRANSACTION_FEE) {
+      throw new Error(`baseFee must be at least ${MIN_TRANSACTION_FEE} stroops`);
+    }
+
+    if (this.config.baseFee > this.config.maxFee) {
+      throw new Error('baseFee cannot exceed maxFee');
+    }
+
     this.server = new rpc.Server(this.config.rpcUrl);
     this.adminKeypair = Keypair.fromSecret(this.config.adminSecretKey);
     this.networkPassphrase = this.config.network === 'testnet' ? Networks.TESTNET : Networks.PUBLIC;
@@ -56,6 +71,8 @@ export class ContractUpdater {
     logger.info('Contract updater initialized', {
       network: this.config.network,
       contractId: this.config.contractId,
+      baseFee: this.config.baseFee,
+      maxFee: this.config.maxFee,
       adminPublicKey: this.adminKeypair.publicKey(),
     });
   }
@@ -159,7 +176,7 @@ export class ContractUpdater {
     const account = await this.server.getAccount(this.adminKeypair.publicKey());
 
     const transaction = new TransactionBuilder(account, {
-      fee: '100000',
+      fee: String(this.config.baseFee),
       networkPassphrase: this.networkPassphrase,
     })
       .addOperation(operation)
@@ -169,7 +186,10 @@ export class ContractUpdater {
     const simulated = await this.server.simulateTransaction(transaction);
 
     if (rpc.Api.isSimulationError(simulated)) {
-      throw new Error(`Simulation failed: ${simulated.error}`);
+      const message = String(simulated.error ?? 'Unknown simulation error');
+      throw new Error(
+        message.startsWith('Simulation failed:') ? message : `Simulation failed: ${message}`
+      );
     }
 
     if (!rpc.Api.isSimulationSuccess(simulated)) {
@@ -251,14 +271,15 @@ export class ContractUpdater {
 
       // 2. Check admin account exists and has funds
       try {
-        const adminAccount = await this.server.getAccount(this.adminKeypair.publicKey());
+        const adminAccount = (await this.server.getAccount(this.adminKeypair.publicKey())) as any;
         result.admin = true;
         result.details.admin = {
           exists: true,
-          balance: adminAccount.balances
-            .filter((balance: any) => balance.asset_type === 'native')
-            .map((balance: any) => balance.balance)
-            .join('') || '0',
+          balance:
+            adminAccount.balances
+              .filter((balance: any) => balance.asset_type === 'native')
+              .map((balance: any) => balance.balance)
+              .join('') || '0',
         };
       } catch (error) {
         result.details.admin = {

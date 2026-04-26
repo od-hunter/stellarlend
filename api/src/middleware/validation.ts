@@ -1,10 +1,12 @@
-import { body, param, validationResult, check } from 'express-validator';
+import { body, param, query, validationResult, check } from 'express-validator';
 import { Request, Response, NextFunction } from 'express';
 import { ValidationError } from '../utils/errors';
 import { StrKey } from '@stellar/stellar-sdk';
 
 const VALID_OPERATIONS = ['deposit', 'borrow', 'repay', 'withdraw'];
 const VALID_IMPORT_FORMATS = ['csv', 'json'];
+const MAX_XDR_LENGTH = 20000;
+const MAX_ASSET_ID_LENGTH = 128;
 
 export const validateRequest = (req: Request, res: Response, next: NextFunction) => {
   const errors = validationResult(req);
@@ -71,6 +73,11 @@ export const prepareValidation = createLendingValidation();
 
 export const submitValidation = [
   body('signedXdr').isString().notEmpty().withMessage('signedXdr is required'),
+  body('signedXdr')
+    .isString()
+    .notEmpty()
+    .isLength({ max: MAX_XDR_LENGTH })
+    .withMessage('signedXdr is required and must be <= 20000 characters'),
   body('operation')
     .optional()
     .isIn(VALID_OPERATIONS)
@@ -93,9 +100,35 @@ export const submitValidation = [
       const amount = BigInt(str);
       if (amount <= 0n) {
         throw new Error(errMsg);
+  body('userAddress')
+    .optional()
+    .custom((value) => {
+      if (value && !StrKey.isValidEd25519PublicKey(value)) {
+        throw new Error('Invalid Stellar address');
       }
-      const maxI128 = (1n << 127n) - 1n;
-      if (amount > maxI128) {
+      return true;
+    }),
+  body('amount')
+    .optional()
+    .custom((value) => {
+      if (!value) return true;
+
+      const errMsg = 'Amount must be a valid positive integer';
+      try {
+        const str = String(value).trim();
+        if (!/^\+?\d+$/.test(str)) {
+          throw new Error(errMsg);
+        }
+        const amount = BigInt(str);
+        if (amount <= 0n) {
+          throw new Error(errMsg);
+        }
+        const maxI128 = (1n << 127n) - 1n;
+        if (amount > maxI128) {
+          throw new Error(errMsg);
+        }
+        return true;
+      } catch {
         throw new Error(errMsg);
       }
       return true;
@@ -140,6 +173,28 @@ export const importRequestValidation = [
 
 export const merchantParamValidation = [
   param('merchantId').isString().notEmpty().withMessage('merchantId is required'),
+    }),
+  body('assetAddress')
+    .optional()
+    .isString()
+    .trim()
+    .notEmpty()
+    .isLength({ max: MAX_ASSET_ID_LENGTH })
+    .withMessage('Asset address must be a non-empty string <= 128 chars'),
+  validateRequest,
+];
+
+export const paginationValidation = [
+  query('limit')
+    .optional()
+    .isInt({ min: 1, max: parseInt(process.env.PAGINATION_MAX_LIMIT || '100', 10) })
+    .withMessage('limit must be a positive integer and at most the configured max'),
+  query('cursor')
+    .optional()
+    .isString()
+    .isLength({ max: 256 })
+    .notEmpty()
+    .withMessage('cursor must be a non-empty string and <= 256 chars'),
   validateRequest,
 ];
 
