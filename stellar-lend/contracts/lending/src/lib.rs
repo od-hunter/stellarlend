@@ -78,9 +78,9 @@ mod risk_monitor;
 pub mod upgrade;
 
 #[cfg(test)]
-mod commitments_test;
-#[cfg(test)]
 mod borrow_test;
+#[cfg(test)]
+mod commitments_test;
 #[cfg(test)]
 mod data_store_test;
 #[cfg(test)]

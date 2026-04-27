@@ -1,10 +1,6 @@
 //! Tests for conditional borrow commitments (oracle triggers, cancel, execute).
 
-use soroban_sdk::{
-    contract, contractimpl,
-    testutils::Address as _,
-    Address, Env, Vec,
-};
+use soroban_sdk::{contract, contractimpl, testutils::Address as _, Address, Env, Vec};
 
 use crate::{
     CommitmentStatus, LendingContract, LendingContractClient, PriceTrigger, TriggerCombiner,

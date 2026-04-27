@@ -1,9 +1,7 @@
 //! Conditional borrow commitments: scheduled borrows that anyone may execute once oracle
 //! triggers and expiry have been satisfied. Intended for keepers / automation.
 
-use soroban_sdk::{
-    contracterror, contracttype, Address, Env, IntoVal, Symbol, Vec,
-};
+use soroban_sdk::{contracterror, contracttype, Address, Env, IntoVal, Symbol, Vec};
 
 use crate::borrow::{
     borrow_from_commitment, get_debt_ceiling, get_min_borrow_amount, get_oracle, get_total_debt,
@@ -161,7 +159,8 @@ pub fn create_borrow_commitment(
         return Err(CommitmentError::BadConfig);
     }
 
-    validate_collateral_ratio(collateral_amount, borrow_amount).map_err(|_| CommitmentError::BadConfig)?;
+    validate_collateral_ratio(collateral_amount, borrow_amount)
+        .map_err(|_| CommitmentError::BadConfig)?;
 
     let now = env.ledger().timestamp();
     if expiry_timestamp <= now {
@@ -294,7 +293,8 @@ pub fn execute_borrow_commitment(env: &Env, commitment_id: u64) -> Result<(), Co
         return Err(CommitmentError::BadConfig);
     }
 
-    validate_collateral_ratio(collateral_fill, fill_amount).map_err(|_| CommitmentError::BorrowFailed)?;
+    validate_collateral_ratio(collateral_fill, fill_amount)
+        .map_err(|_| CommitmentError::BorrowFailed)?;
 
     borrow_from_commitment(
         env,

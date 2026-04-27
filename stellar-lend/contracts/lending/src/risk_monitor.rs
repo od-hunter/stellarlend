@@ -152,7 +152,5 @@ pub fn set_risk_alert_thresholds(
 }
 
 pub fn get_risk_alert_thresholds(env: &Env) -> Option<RiskAlertThresholds> {
-    env.storage()
-        .persistent()
-        .get(&RiskMonitorKey::Thresholds)
+    env.storage().persistent().get(&RiskMonitorKey::Thresholds)
 }
