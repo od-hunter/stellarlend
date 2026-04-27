@@ -1,4 +1,6 @@
 #![no_std]
+// create_borrow_commitment and contractimpl-generated glue exceed clippy::too_many_arguments (7)
+#![allow(clippy::too_many_arguments)]
 
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Bytes, Env, Val, Vec};
 

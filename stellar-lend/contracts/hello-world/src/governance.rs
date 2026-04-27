@@ -486,11 +486,10 @@ pub fn get_parameter_optimization_recommendation(
     // Heuristic:
     // - low participation => reduce quorum moderately
     // - suspicious activity => raise quorum and threshold moderately
-    let votes_per_proposal = if analytics.total_proposals == 0 {
-        0
-    } else {
-        analytics.total_votes / analytics.total_proposals
-    };
+    let votes_per_proposal = analytics
+        .total_votes
+        .checked_div(analytics.total_proposals)
+        .unwrap_or(0);
 
     let mut suggested_quorum_bps = config.quorum_bps;
     if votes_per_proposal < 10 && suggested_quorum_bps > 2_000 {

@@ -59,7 +59,7 @@ pub fn on_utilization_changed(env: &Env, total_debt: i128, debt_ceiling: i128) {
         return;
     }
 
-    let util_bps_u128 = (total_debt as i128)
+    let util_bps_u128 = total_debt
         .saturating_mul(10000)
         .saturating_div(debt_ceiling)
         .max(0) as u128;

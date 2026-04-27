@@ -10,8 +10,8 @@ import type {
 import logger from '../utils/logger';
 
 const REWARD_CONFIG: StakingRewardConfig = {
-  baseAprBps: 500,        // 5% base APR
-  lockupBonusBps: 200,    // +2% per 30-day lockup tier
+  baseAprBps: 500, // 5% base APR
+  lockupBonusBps: 200, // +2% per 30-day lockup tier
   epochDurationSeconds: 86_400, // daily epochs
 };
 
@@ -90,7 +90,10 @@ export class StakingService {
         updatedAt: now(),
       };
       positions.set(req.userAddress, updated);
-      logger.info('Staking position increased', { userAddress: req.userAddress, amount: req.amount });
+      logger.info('Staking position increased', {
+        userAddress: req.userAddress,
+        amount: req.amount,
+      });
       return updated;
     }
 
@@ -189,8 +192,7 @@ export class StakingService {
     };
 
     const delegatedPower = BigInt(delegatorPos.votingPower || delegatorPos.stakedAmount);
-    const delegateNewVP =
-      BigInt(delegatePos.votingPower) + delegatedPower;
+    const delegateNewVP = BigInt(delegatePos.votingPower) + delegatedPower;
 
     const updatedDelegate: StakingPosition = {
       ...delegatePos,
