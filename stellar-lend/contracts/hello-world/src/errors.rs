@@ -3,6 +3,7 @@ use soroban_sdk::contracterror;
 use crate::admin::AdminError;
 use crate::analytics::AnalyticsError;
 use crate::borrow::BorrowError;
+use crate::cross_asset::CrossAssetError;
 use crate::deposit::DepositError;
 use crate::flash_loan::FlashLoanError;
 use crate::interest_rate::InterestRateError;
@@ -10,9 +11,9 @@ use crate::liquidate::LiquidationError;
 use crate::mev_protection::MevProtectionError;
 use crate::rate_limiter::RateLimitError;
 use crate::repay::RepayError;
+use crate::reserve::ReserveError;
 use crate::risk_management::RiskManagementError;
 use crate::risk_params::RiskParamsError;
-use crate::reserve::ReserveError;
 use crate::treasury::TreasuryError;
 use crate::withdraw::WithdrawError;
 
@@ -60,6 +61,13 @@ pub enum GovernanceError {
     AlreadyDelegated = 138,
     DelegationDepthExceeded = 139,
     ProposalRateLimitExceeded = 140,
+    // Timelock errors
+    TimelockNotFound = 141,
+    TimelockNotReady = 142,
+    TimelockExpired = 143,
+    InvalidTimelockStatus = 144,
+    InvalidTimelockConfig = 145,
+    InvalidTimelockDelay = 146,
 }
 
 /// Unified public contract error type for the lending interface.
@@ -136,6 +144,10 @@ pub enum LendingError {
     CommitExpired = 32,
     /// Protected execution would exceed the user's declared fee cap.
     FeeCapExceeded = 33,
+    /// Requested resource or entity was not found.
+    NotFound = 34,
+    /// Entity already exists.
+    AlreadyExists = 35,
 }
 
 macro_rules! impl_from_error {
@@ -320,3 +332,20 @@ impl_from_error!(WithdrawError, {
     WithdrawError::Reentrancy => LendingError::Reentrancy,
     WithdrawError::Undercollateralized => LendingError::InvalidState,
 });
+
+impl From<CrossAssetError> for LendingError {
+    fn from(error: CrossAssetError) -> Self {
+        match error {
+            CrossAssetError::AssetNotConfigured => LendingError::DataNotFound,
+            CrossAssetError::AssetDisabled => LendingError::AssetNotEnabled,
+            CrossAssetError::InsufficientCollateral => LendingError::InsufficientCollateral,
+            CrossAssetError::ExceedsBorrowCapacity => LendingError::InsufficientCollateralRatio,
+            CrossAssetError::UnhealthyPosition => LendingError::InsufficientCollateralRatio,
+            CrossAssetError::SupplyCapExceeded => LendingError::LimitExceeded,
+            CrossAssetError::BorrowCapExceeded => LendingError::LimitExceeded,
+            CrossAssetError::InvalidPrice => LendingError::PriceUnavailable,
+            CrossAssetError::PriceStale => LendingError::PriceUnavailable,
+            CrossAssetError::NotAuthorized => LendingError::Unauthorized,
+        }
+    }
+}

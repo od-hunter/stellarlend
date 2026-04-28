@@ -7,7 +7,9 @@ pub mod admin;
 pub mod analytics;
 pub mod borrow;
 pub mod bridge;
+pub mod circuit_breaker;
 pub mod config;
+pub mod credit_score;
 pub mod cross_asset;
 pub mod deposit;
 pub mod errors;
@@ -30,6 +32,7 @@ pub mod risk_management;
 pub mod risk_params;
 pub mod safe_math;
 pub mod storage;
+pub mod timelock;
 pub mod treasury;
 pub mod types;
 pub mod withdraw;
@@ -679,8 +682,14 @@ impl HelloContract {
         reserve_amount: i128,
         lp_tokens_received: i128,
     ) -> Result<(), LendingError> {
-        reserve::record_reserve_deploy_to_amm(&env, caller, asset, reserve_amount, lp_tokens_received)
-            .map_err(Into::into)
+        reserve::record_reserve_deploy_to_amm(
+            &env,
+            caller,
+            asset,
+            reserve_amount,
+            lp_tokens_received,
+        )
+        .map_err(Into::into)
     }
 
     pub fn get_reserve_amm_lp_balance(env: Env, asset: Option<Address>) -> i128 {
@@ -880,8 +889,359 @@ impl HelloContract {
     ) -> rate_limiter::RateLimitStatus {
         rate_limiter::get_global_status(&env, operation, pool)
     }
+
+    // -------------------------------------------------------------------------
+    // Interest Rate Views (Issue #180)
+    // -------------------------------------------------------------------------
+
+    /// Current borrow APY in basis points (e.g., 500 = 5%).
+    pub fn get_borrow_rate(env: Env) -> i128 {
+        interest_rate::get_current_borrow_rate(&env).unwrap_or(0)
+    }
+
+    /// Current supply APY in basis points.
+    pub fn get_supply_rate(env: Env) -> i128 {
+        interest_rate::get_current_supply_rate(&env).unwrap_or(0)
+    }
+
+    /// Current protocol utilization in basis points (0-10000).
+    pub fn get_utilization_rate(env: Env) -> i128 {
+        interest_rate::get_current_utilization(&env).unwrap_or(0)
+    }
+
+    /// Admin-only: update interest rate model parameters.
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_interest_rate_config(
+        env: Env,
+        caller: Address,
+        base_rate_bps: Option<i128>,
+        kink_utilization_bps: Option<i128>,
+        multiplier_bps: Option<i128>,
+        jump_multiplier_bps: Option<i128>,
+        rate_floor_bps: Option<i128>,
+        rate_ceiling_bps: Option<i128>,
+        spread_bps: Option<i128>,
+    ) -> Result<(), LendingError> {
+        interest_rate::update_interest_rate_config(
+            &env,
+            caller,
+            base_rate_bps,
+            kink_utilization_bps,
+            multiplier_bps,
+            jump_multiplier_bps,
+            rate_floor_bps,
+            rate_ceiling_bps,
+            spread_bps,
+        )
+        .map_err(Into::into)
+    }
+
+    /// Current global borrow index (scaled by 1e12; starts at 1e12 = "1.0").
+    pub fn get_borrow_index(env: Env) -> i128 {
+        interest_rate::get_borrow_index(&env)
+    }
+
+    /// Current global supply index (scaled by 1e12).
+    pub fn get_supply_index(env: Env) -> i128 {
+        interest_rate::get_supply_index(&env)
+    }
+
+    // -------------------------------------------------------------------------
+    // Cross-Asset Lending Module (Issues #177, #178, #179)
+    // -------------------------------------------------------------------------
+
+    /// Initialize the cross-asset lending module (admin-only, once).
+    pub fn initialize_ca(env: Env, admin: Address) -> Result<(), LendingError> {
+        cross_asset::initialize(&env, admin).map_err(Into::into)
+    }
+
+    /// Register a new asset with per-asset parameters (admin-only).
+    pub fn initialize_asset(
+        env: Env,
+        asset: Option<Address>,
+        config: cross_asset::AssetConfig,
+    ) -> Result<(), LendingError> {
+        cross_asset::initialize_asset(&env, asset, config).map_err(Into::into)
+    }
+
+    /// Update an existing asset's configuration (admin-only).
+    /// Emits SupplyCapChangedEvent / BorrowCapChangedEvent when caps change.
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_ca_config(
+        env: Env,
+        asset: Option<Address>,
+        collateral_factor: Option<i128>,
+        liquidation_threshold: Option<i128>,
+        max_supply: Option<i128>,
+        max_borrow: Option<i128>,
+        can_collateralize: Option<bool>,
+        can_borrow: Option<bool>,
+    ) -> Result<(), LendingError> {
+        cross_asset::update_asset_config(
+            &env,
+            asset,
+            collateral_factor,
+            liquidation_threshold,
+            max_supply,
+            max_borrow,
+            can_collateralize,
+            can_borrow,
+        )
+        .map_err(Into::into)
+    }
+
+    /// Update oracle price for an asset (admin-only).
+    pub fn update_asset_price(
+        env: Env,
+        asset: Option<Address>,
+        price: i128,
+    ) -> Result<(), LendingError> {
+        cross_asset::update_asset_price(&env, asset, price).map_err(Into::into)
+    }
+
+    /// Deposit collateral into a specific asset pool.
+    pub fn cross_asset_deposit(
+        env: Env,
+        user: Address,
+        asset: Option<Address>,
+        amount: i128,
+    ) -> Result<cross_asset::AssetPosition, LendingError> {
+        cross_asset::cross_asset_deposit(&env, user, asset, amount).map_err(Into::into)
+    }
+
+    /// Withdraw collateral from a specific asset pool.
+    pub fn cross_asset_withdraw(
+        env: Env,
+        user: Address,
+        asset: Option<Address>,
+        amount: i128,
+    ) -> Result<cross_asset::AssetPosition, LendingError> {
+        cross_asset::cross_asset_withdraw(&env, user, asset, amount).map_err(Into::into)
+    }
+
+    /// Borrow from a specific asset pool against cross-pool (or isolated) collateral.
+    pub fn cross_asset_borrow(
+        env: Env,
+        user: Address,
+        asset: Option<Address>,
+        amount: i128,
+    ) -> Result<cross_asset::AssetPosition, LendingError> {
+        cross_asset::cross_asset_borrow(&env, user, asset, amount).map_err(Into::into)
+    }
+
+    /// Repay debt in a specific asset pool.
+    pub fn ca_repay_debt(
+        env: Env,
+        user: Address,
+        asset: Option<Address>,
+        amount: i128,
+    ) -> Result<cross_asset::AssetPosition, LendingError> {
+        cross_asset::cross_asset_repay(&env, user, asset, amount).map_err(Into::into)
+    }
+
+    /// Get a user's cross-asset position summary (health factor, capacity, etc.).
+    pub fn get_ca_position(
+        env: Env,
+        user: Address,
+    ) -> Result<cross_asset::UserPositionSummary, LendingError> {
+        cross_asset::get_user_position_summary(&env, &user).map_err(Into::into)
+    }
+
+    /// Read-only: look up asset configuration.
+    pub fn get_ca_asset_config(
+        env: Env,
+        asset: Option<Address>,
+    ) -> Result<cross_asset::AssetConfig, LendingError> {
+        cross_asset::get_asset_config_by_address(&env, asset).map_err(Into::into)
+    }
+
+    /// Read-only: return the list of registered asset keys.
+    pub fn get_ca_asset_list(env: Env) -> Vec<cross_asset::AssetKey> {
+        cross_asset::get_asset_list(&env)
+    }
+
+    /// Supply headroom analytics: (available, cap, current_supply).
+    /// Returns (i128::MAX, 0, current_supply) when cap is unlimited.
+    pub fn get_supply_headroom(
+        env: Env,
+        asset: Option<Address>,
+    ) -> Result<(i128, i128, i128), LendingError> {
+        cross_asset::get_supply_headroom(&env, asset).map_err(Into::into)
+    }
+
+    /// Borrow utilization analytics: (current_borrows, cap).
+    /// Returns (borrows, 0) when cap is unlimited.
+    pub fn get_borrow_utilization(
+        env: Env,
+        asset: Option<Address>,
+    ) -> Result<(i128, i128), LendingError> {
+        cross_asset::get_borrow_utilization(&env, asset).map_err(Into::into)
+    }
+
+    /// Emergency freeze or unfreeze a pool (admin-only).
+    pub fn freeze_pool(
+        env: Env,
+        caller: Address,
+        asset: Option<Address>,
+        freeze: bool,
+    ) -> Result<(), LendingError> {
+        cross_asset::freeze_pool(&env, caller, asset, freeze).map_err(Into::into)
+    }
+
+    // -------------------------------------------------------------------------
+    // Credit Scoring System (Issue #189)
+    // -------------------------------------------------------------------------
+
+    /// Initialize credit score for a user
+    pub fn initialize_credit_score(env: Env, user: Address) -> Result<(), LendingError> {
+        credit_score::initialize_credit_score(&env, &user)
+    }
+
+    /// Get credit score for a user
+    pub fn get_credit_score(env: Env, user: Address) -> Result<credit_score::CreditScore, LendingError> {
+        credit_score::get_credit_score(&env, &user)
+    }
+
+    /// Calculate adjusted LTV based on credit score
+    pub fn get_adjusted_ltv(env: Env, user: Address) -> Result<i128, LendingError> {
+        credit_score::calculate_adjusted_ltv(&env, &user)
+    }
+
+    /// Calculate adjusted interest rate based on credit score
+    pub fn get_adjusted_interest_rate(
+        env: Env,
+        user: Address,
+        base_rate_bps: i128,
+    ) -> Result<i128, LendingError> {
+        credit_score::calculate_adjusted_interest_rate(&env, &user, base_rate_bps)
+    }
+
+    // -------------------------------------------------------------------------
+    // Timelock Controller (Issue #187)
+    // -------------------------------------------------------------------------
+
+    /// Initialize timelock configuration
+    pub fn initialize_timelock(
+        env: Env,
+        config: timelock::TimelockConfig,
+    ) -> Result<(), LendingError> {
+        timelock::initialize_timelock(&env, config).map_err(|e| match e {
+            crate::errors::GovernanceError::InvalidTimelockConfig => LendingError::InvalidParameter,
+            _ => LendingError::Unauthorized,
+        })
+    }
+
+    /// Queue a timelock operation
+    pub fn queue_timelock_operation(
+        env: Env,
+        proposer: Address,
+        proposal_type: types::ProposalType,
+        description: String,
+        custom_delay: Option<u64>,
+    ) -> Result<u64, LendingError> {
+        timelock::queue_timelock_operation(&env, proposer, proposal_type, description, custom_delay)
+            .map_err(|_| LendingError::Unauthorized)
+    }
+
+    /// Execute a timelock operation
+    pub fn execute_timelock_operation(
+        env: Env,
+        executor: Address,
+        operation_id: u64,
+    ) -> Result<(), LendingError> {
+        timelock::execute_timelock_operation(&env, executor, operation_id)
+            .map_err(|_| LendingError::Unauthorized)
+    }
+
+    /// Cancel a timelock operation
+    pub fn cancel_timelock_operation(
+        env: Env,
+        caller: Address,
+        operation_id: u64,
+    ) -> Result<(), LendingError> {
+        timelock::cancel_timelock_operation(&env, caller, operation_id)
+            .map_err(|_| LendingError::Unauthorized)
+    }
+
+    /// Get timelock operation
+    pub fn get_timelock_operation(
+        env: Env,
+        operation_id: u64,
+    ) -> Option<timelock::TimelockOperation> {
+        timelock::get_timelock_operation(&env, operation_id)
+    }
+
+    /// Get all pending timelock operations
+    pub fn get_pending_timelock_operations(env: Env) -> Vec<timelock::TimelockOperation> {
+        timelock::get_pending_timelock_operations(&env)
+    }
+
+    // -------------------------------------------------------------------------
+    // Circuit Breaker (Issue #186)
+    // -------------------------------------------------------------------------
+
+    /// Initialize circuit breaker
+    pub fn initialize_circuit_breaker(
+        env: Env,
+        config: circuit_breaker::CircuitBreakerConfig,
+    ) -> Result<(), LendingError> {
+        circuit_breaker::initialize_circuit_breaker(&env, config)
+    }
+
+    /// Activate circuit breaker (governance or admin only)
+    pub fn activate_circuit_breaker(
+        env: Env,
+        caller: Address,
+        reason: circuit_breaker::CircuitBreakerReason,
+        emergency_mode: bool,
+    ) -> Result<(), LendingError> {
+        circuit_breaker::activate_circuit_breaker(&env, caller, reason, emergency_mode)
+    }
+
+    /// Deactivate circuit breaker (governance or admin only)
+    pub fn deactivate_circuit_breaker(env: Env, caller: Address) -> Result<(), LendingError> {
+        circuit_breaker::deactivate_circuit_breaker(&env, caller)
+    }
+
+    /// Get circuit breaker state
+    pub fn get_circuit_breaker_state(
+        env: Env,
+    ) -> Result<circuit_breaker::CircuitBreakerState, LendingError> {
+        circuit_breaker::get_circuit_breaker_state(&env)
+    }
+
+    /// Check if liquidations are allowed
+    pub fn is_liquidation_allowed(env: Env, liquidator: Address) -> Result<bool, LendingError> {
+        circuit_breaker::is_liquidation_allowed(&env, &liquidator)
+    }
+
+    /// Add address to emergency liquidator whitelist
+    pub fn add_to_whitelist(
+        env: Env,
+        admin: Address,
+        liquidator: Address,
+    ) -> Result<(), LendingError> {
+        circuit_breaker::add_to_whitelist(&env, admin, liquidator)
+    }
+
+    /// Remove address from emergency liquidator whitelist
+    pub fn remove_from_whitelist(
+        env: Env,
+        admin: Address,
+        liquidator: Address,
+    ) -> Result<(), LendingError> {
+        circuit_breaker::remove_from_whitelist(&env, admin, liquidator)
+    }
+
+    /// Get whitelist
+    pub fn get_circuit_breaker_whitelist(env: Env) -> Vec<Address> {
+        circuit_breaker::get_whitelist(&env)
+    }
 }
 
+#[cfg(test)]
+#[path = "tests/borrow_cap_test.rs"]
+mod borrow_cap_test;
 #[cfg(test)]
 #[path = "tests/cross_contract_test.rs"]
 mod cross_contract_test;
@@ -891,10 +1251,16 @@ mod flash_loan_test;
 #[path = "tests/governance_test.rs"]
 mod governance_test;
 #[cfg(test)]
+#[path = "tests/isolated_pool_test.rs"]
+mod isolated_pool_test;
+#[cfg(test)]
 #[path = "tests/mev_protection_test.rs"]
 mod mev_protection_test;
 #[cfg(test)]
 mod multi_collateral_test;
+#[cfg(test)]
+#[path = "tests/supply_cap_test.rs"]
+mod supply_cap_test;
 #[cfg(test)]
 mod test_reentrancy;
 #[cfg(test)]
